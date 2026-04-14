@@ -40,15 +40,20 @@ async def append_message(session_id: str, message: Message) -> None:
         (session_id, message.role, message.content,
          message.timestamp.isoformat()),
     )
-    await db.execute(
+    # Increment counter and read it back in one round-trip
+    async with db.execute(
         "UPDATE sessions SET updated_at = datetime('now'), "
-        "message_count = message_count + 1 WHERE session_id = ?",
+        "message_count = message_count + 1 WHERE session_id = ? "
+        "RETURNING message_count",
         (session_id,),
-    )
+    ) as cur:
+        row = await cur.fetchone()
+        new_count = row[0] if row else MAX_MESSAGES_PER_SESSION + 1
+
     await db.commit()
 
-    # Prune oldest messages if over cap
-    await _prune_if_needed(session_id)
+    # Prune if needed, using the already-known count (no extra SELECT)
+    await _prune_if_needed(session_id, new_count)
 
 
 async def get_session_history(session_id: str,
@@ -118,28 +123,29 @@ async def get_session_tasks(session_id: str, limit: int = 20) -> list[dict]:
     return results
 
 
-async def _prune_if_needed(session_id: str) -> None:
-    """Remove oldest messages if session exceeds MAX_MESSAGES_PER_SESSION."""
-    db = await get_db()
-    async with db.execute(
-        "SELECT COUNT(*) as cnt FROM messages WHERE session_id = ?",
-        (session_id,),
-    ) as cursor:
-        row = await cursor.fetchone()
-        count = row["cnt"]
+async def _prune_if_needed(session_id: str, message_count: int) -> None:
+    """Remove oldest messages if session exceeds MAX_MESSAGES_PER_SESSION.
 
-    if count > MAX_MESSAGES_PER_SESSION:
-        excess = count - MAX_MESSAGES_PER_SESSION
-        await db.execute(
-            """
-            DELETE FROM messages WHERE id IN (
-                SELECT id FROM messages
-                WHERE session_id = ?
-                ORDER BY id ASC
-                LIMIT ?
-            )
-            """,
-            (session_id, excess),
+    Args:
+        session_id:    The session to potentially prune.
+        message_count: The current count already read from the sessions table;
+                       avoids an extra SELECT COUNT(*) query.
+    """
+    if message_count <= MAX_MESSAGES_PER_SESSION:
+        return
+
+    db = await get_db()
+    excess = message_count - MAX_MESSAGES_PER_SESSION
+    await db.execute(
+        """
+        DELETE FROM messages WHERE id IN (
+            SELECT id FROM messages
+            WHERE session_id = ?
+            ORDER BY id ASC
+            LIMIT ?
         )
-        await db.commit()
-        log.info("session.pruned", session_id=session_id, removed=excess)
+        """,
+        (session_id, excess),
+    )
+    await db.commit()
+    log.info("session.pruned", session_id=session_id, removed=excess)

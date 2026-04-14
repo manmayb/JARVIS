@@ -19,6 +19,15 @@ async def init_db() -> None:
     _db = await aiosqlite.connect(settings.db_path)
     _db.row_factory = aiosqlite.Row
     await _run_migrations(_db)
+
+    # Phase 1 — Memory tables (created alongside core tables)
+    if settings.enable_episodic_memory:
+        from models.embeddings import init_episodic_table
+        await init_episodic_table()
+    if settings.enable_semantic_memory:
+        from models.user_facts import init_facts_table
+        await init_facts_table()
+
     log.info("db.initialized", path=settings.db_path)
 
 

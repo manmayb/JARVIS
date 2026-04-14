@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jarvis — Dashboard</title>
+  <meta name="description" content="Jarvis AI Agent monitoring dashboard. View sessions, memory, tools, and interact with the agent in real-time.">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <div class="icon">⚡</div>
+        <div>
+          <h1>Jarvis</h1>
+          <div class="version">v2.0 Dashboard</div>
+        </div>
+      </div>
+
+      <button class="nav-item active" data-page="overview">
+        <span class="icon">📊</span> Overview
+      </button>
+      <button class="nav-item" data-page="chat">
+        <span class="icon">💬</span> Chat
+      </button>
+      <button class="nav-item" data-page="sessions">
+        <span class="icon">📁</span> Sessions
+      </button>
+      <button class="nav-item" data-page="memory">
+        <span class="icon">🧠</span> Memory
+      </button>
+      <button class="nav-item" data-page="tools">
+        <span class="icon">🔧</span> Tools
+      </button>
+    </aside>
+
+    <!-- Main content -->
+    <main class="main">
+
+      <!-- ═══ OVERVIEW ═══ -->
+      <div class="page active" id="page-overview">
+        <div class="page-header">
+          <h2>System Overview <span class="pulse"></span></h2>
+          <p>Live system metrics and configuration</p>
+        </div>
+
+        <div class="section">
+          <div class="grid grid-4">
+            <div class="card">
+              <div class="card-title">Tools Loaded</div>
+              <div class="card-value accent" id="stat-tools">—</div>
+            </div>
+            <div class="card">
+              <div class="card-title">Active Sessions</div>
+              <div class="card-value" id="stat-sessions">—</div>
+            </div>
+            <div class="card">
+              <div class="card-title">LLM Cache Hit Rate</div>
+              <div class="card-value success" id="stat-cache-hit">—</div>
+            </div>
+            <div class="card">
+              <div class="card-title">Cached Responses</div>
+              <div class="card-value warning" id="stat-cache-size">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-2">
+          <div class="section">
+            <div class="section-title">⚙️ Configuration</div>
+            <div class="table-wrapper">
+              <table>
+                <thead><tr><th>Feature</th><th>Status</th></tr></thead>
+                <tbody id="features-list"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">📋 Recent Sessions</div>
+            <div class="table-wrapper">
+              <table>
+                <thead><tr><th>Session</th><th>User</th><th>Msgs</th><th>Last Active</th></tr></thead>
+                <tbody id="recent-sessions"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ CHAT ═══ -->
+      <div class="page" id="page-chat">
+        <div class="page-header">
+          <h2>💬 Agent Chat</h2>
+          <p>Interact with Jarvis directly</p>
+        </div>
+        <div class="chat-container">
+          <div class="chat-messages" id="chat-messages">
+            <div class="chat-msg assistant">
+              Hello! I'm Jarvis. How can I help you today?
+              <div class="meta">System</div>
+            </div>
+          </div>
+          <div class="chat-input-row">
+            <input type="text" id="chat-input" placeholder="Type a message..." autocomplete="off">
+            <button class="btn btn-primary" id="chat-send">Send</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ SESSIONS ═══ -->
+      <div class="page" id="page-sessions">
+        <div class="page-header">
+          <h2>📁 Sessions</h2>
+          <p>All recorded chat sessions</p>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead><tr><th>Session ID</th><th>User</th><th>Messages</th><th>Created</th><th>Last Active</th></tr></thead>
+            <tbody id="all-sessions"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ═══ MEMORY ═══ -->
+      <div class="page" id="page-memory">
+        <div class="page-header">
+          <h2>🧠 Memory</h2>
+          <p>Episodic memory and user facts</p>
+        </div>
+
+        <div class="grid grid-2">
+          <div class="section">
+            <div class="section-title">📖 Episodic Memory</div>
+            <div id="episodes-list"><div class="loader"></div></div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">🏷️ User Facts</div>
+            <div id="facts-list"><div class="loader"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ TOOLS ═══ -->
+      <div class="page" id="page-tools">
+        <div class="page-header">
+          <h2>🔧 Registered Tools</h2>
+          <p>All tools available to the agent</p>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead><tr><th>Name</th><th>Description</th><th>Tier</th><th>Rate Limit</th><th>Timeout</th></tr></thead>
+            <tbody id="tools-list"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>

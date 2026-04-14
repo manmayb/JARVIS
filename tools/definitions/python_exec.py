@@ -1,4 +1,4 @@
-import asyncio, tempfile, os, textwrap
+import asyncio, tempfile, os, textwrap, ast
 from tools.registry import register_tool
 from core.config import settings
 from core.observability import get_logger
@@ -13,14 +13,71 @@ _SAFE_ENV = {
     "PYTHONPATH": "",
     "PYTHONDONTWRITEBYTECODE": "1",
 }
-_BLOCKED = [
-    "import os", "import sys", "import subprocess", "import socket",
-    "import requests", "import urllib", "import http", "import shutil",
-    "__import__", "open(", "eval(", "exec(", "compile(", "importlib",
-]
 
-def _static_check(code: str) -> list[str]:
-    return [f"Blocked: '{p}'" for p in _BLOCKED if p in code]
+# Modules that must never be imported, even transitively
+_BLOCKED_MODULES = {
+    "os", "sys", "subprocess", "socket", "requests", "urllib",
+    "http", "shutil", "importlib", "builtins", "ctypes", "threading",
+    "multiprocessing", "signal", "pathlib", "glob", "tempfile",
+    "pickle", "shelve", "marshal", "pty", "tty", "termios",
+}
+
+# Top-level names that must never be called directly
+_BLOCKED_BUILTINS = {"eval", "exec", "compile", "open", "__import__", "breakpoint"}
+
+# Dunder attributes that grant class hierarchy introspection / escape hatches
+_BLOCKED_ATTRS = {
+    "__class__", "__bases__", "__subclasses__", "__mro__",
+    "__globals__", "__builtins__", "__code__", "__closure__",
+    "__reduce__", "__reduce_ex__",
+}
+
+
+class _ASTSecurityVisitor(ast.NodeVisitor):
+    """Walk the AST and collect policy violations."""
+
+    def __init__(self):
+        self.violations: list[str] = []
+
+    def visit_Import(self, node: ast.Import):
+        for alias in node.names:
+            root = alias.name.split(".")[0]
+            if root in _BLOCKED_MODULES:
+                self.violations.append(f"Blocked import: '{alias.name}'")
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom):
+        root = (node.module or "").split(".")[0]
+        if root in _BLOCKED_MODULES:
+            self.violations.append(f"Blocked import: 'from {node.module} import ...'")
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call):
+        # Catch bare calls: eval(...), exec(...), open(...)
+        if isinstance(node.func, ast.Name) and node.func.id in _BLOCKED_BUILTINS:
+            self.violations.append(f"Blocked call: '{node.func.id}()'")
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute):
+        if node.attr in _BLOCKED_ATTRS:
+            self.violations.append(f"Blocked attribute access: '.{node.attr}'")
+        self.generic_visit(node)
+
+
+def _ast_check(code: str) -> list[str]:
+    """
+    Parse the code into an AST and run the security visitor.
+    Returns a list of violation strings; empty means clean.
+    A SyntaxError itself is returned as a violation so malformed
+    code that might confuse a string scanner is always rejected.
+    """
+    try:
+        tree = ast.parse(code, filename="<sandbox>")
+    except SyntaxError as e:
+        return [f"SyntaxError: {e}"]
+    visitor = _ASTSecurityVisitor()
+    visitor.visit(tree)
+    return visitor.violations
 
 @register_tool(
     name="python_exec",
@@ -39,9 +96,9 @@ def _static_check(code: str) -> list[str]:
 async def python_exec(code: str) -> dict:
     if len(code) > _MAX_CODE_CHARS:
         return {"error": f"Code exceeds {_MAX_CODE_CHARS} char limit.", "stdout": ""}
-    violations = _static_check(code)
+    violations = _ast_check(code)
     if violations:
-        return {"error": f"Static check failed: {chr(59).join(violations)}", "stdout": ""}
+        return {"error": "AST security check failed", "violations": violations, "stdout": ""}
 
     wrapper = textwrap.dedent(f"""
         import builtins, sys

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 from typing import Any, Optional
 from datetime import datetime
 import uuid
@@ -15,9 +15,10 @@ class TaskRequest(BaseModel):
     user_id: str = "default_user"
     trace_id: str = Field(default_factory=lambda: f"tr_{uuid.uuid4().hex[:12]}")
 
-    _steps_completed: int = 0
-    _tool_calls_log: list = []
-    _last_thought: str = ""
+    # Private mutable state — isolated per instance, excluded from serialization
+    _steps_completed: int = PrivateAttr(default=0)
+    _tool_calls_log: list = PrivateAttr(default_factory=list)
+    _last_thought: str = PrivateAttr(default="")
 
 class TaskResult(BaseModel):
     task_id: str

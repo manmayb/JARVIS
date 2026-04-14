@@ -1,11 +1,21 @@
+"""LLM routing and caching layer.
+
+Routes between Haiku (fast/cheap) and Sonnet (strong) based on prompt
+token count and task type.  Integrates the TTL cache from ``core.cache``
+so that identical prompts within the cache window skip the API call entirely.
+"""
+
 import anthropic, time
 from functools import lru_cache
 from core.config import settings
 from core.errors import AgentError, ConfigurationError
 from core.observability import get_logger
+from core.tokenizer import count_messages_tokens
+from core.cache import llm_cache, TTLCache
 from pydantic import BaseModel
 
 log = get_logger(__name__)
+
 
 class LLMResponse(BaseModel):
     content: str
@@ -13,6 +23,8 @@ class LLMResponse(BaseModel):
     tokens_in: int
     tokens_out: int
     latency_ms: int
+    from_cache: bool = False
+
 
 FAST_MODEL   = "claude-haiku-4-5-20251001"
 STRONG_MODEL = "claude-sonnet-4-6"
@@ -27,10 +39,12 @@ def _is_placeholder_api_key(value: str) -> bool:
 def _get_client() -> anthropic.AsyncAnthropic:
     return anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
+
 def _select_model(prompt_tokens: int, task_type: str) -> str:
     if prompt_tokens > 2000 or task_type in ("research", "coding", "analysis"):
         return STRONG_MODEL
     return FAST_MODEL
+
 
 async def call(messages: list[dict], system: str,
                task_type: str = "general",
@@ -40,12 +54,20 @@ async def call(messages: list[dict], system: str,
             "ANTHROPIC_API_KEY is missing or still set to a placeholder value in .env"
         )
 
-    prompt_tokens = sum(len(m["content"]) for m in messages) // 4
+    # ── Token-accurate counting ──
+    prompt_tokens = count_messages_tokens(messages)
     model         = _select_model(prompt_tokens, task_type)
-    start         = time.monotonic()
+    
+    # ── Cache lookup ──
+    cache_key = TTLCache._make_key(model, system, messages)
+    cached = await llm_cache.get(cache_key)
+    if cached is not None:
+        log.info("llm.cache_hit", model=model, trace_id=trace_id)
+        return LLMResponse(**cached, from_cache=True)
 
+    start = time.monotonic()
     log.info("llm.call_start", model=model, trace_id=trace_id,
-             est_prompt_tokens=prompt_tokens)
+             prompt_tokens=prompt_tokens)
 
     try:
         response = await _get_client().messages.create(
@@ -74,7 +96,18 @@ async def call(messages: list[dict], system: str,
              tokens_out=response.usage.output_tokens,
              trace_id=trace_id)
 
-    return LLMResponse(content=content, model_used=model,
-                       tokens_in=response.usage.input_tokens,
-                       tokens_out=response.usage.output_tokens,
-                       latency_ms=latency)
+    result = LLMResponse(content=content, model_used=model,
+                         tokens_in=response.usage.input_tokens,
+                         tokens_out=response.usage.output_tokens,
+                         latency_ms=latency)
+
+    # ── Cache store (only cache successful responses) ──
+    await llm_cache.set(cache_key, {
+        "content": result.content,
+        "model_used": result.model_used,
+        "tokens_in": result.tokens_in,
+        "tokens_out": result.tokens_out,
+        "latency_ms": result.latency_ms,
+    }, ttl=settings.llm_cache_ttl)
+
+    return result
