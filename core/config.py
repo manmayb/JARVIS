@@ -1,3 +1,9 @@
+"""Configuration settings.
+
+Dependencies used by this project include: anthropic, fastapi, pydantic,
+pydantic-settings, aiofiles, httpx, sympy, aiosqlite.
+"""
+
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
@@ -10,8 +16,6 @@ class Settings(BaseSettings):
     max_steps: int = 12
     global_timeout_seconds: int = 200
     retry_budget_threshold: float = 0.80
-
-    class Config:
-        env_file = ".env"
+    db_path: str = "jarvis.db"
 
 settings = Settings()

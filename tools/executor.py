@@ -1,4 +1,5 @@
 import asyncio, time
+from collections import defaultdict
 from tools.registry import get_tool
 from tools.sandbox import check_permission
 from tools.schemas import ToolCallRequest, ToolCallResult, ToolError
@@ -8,6 +9,33 @@ from core.observability import get_logger
 
 log = get_logger(__name__)
 RETRY_DELAYS = [1, 5]
+
+# In-memory sliding window rate limiter
+# Key format: "user_id:tool_name" → list of call timestamps (monotonic)
+_rate_limit_store: dict[str, list[float]] = defaultdict(list)
+_rate_limit_lock = asyncio.Lock()
+
+
+async def _check_rate_limit(tool_name: str, user_id: str,
+                             limit_per_minute: int) -> bool:
+    """
+    Sliding window rate limiter.
+    Returns True if the call is allowed, False if limit exceeded.
+    """
+    key = f"{user_id}:{tool_name}"
+    now = time.monotonic()
+    window_start = now - 60.0
+
+    async with _rate_limit_lock:
+        # Drop timestamps older than 60 seconds
+        _rate_limit_store[key] = [
+            t for t in _rate_limit_store[key] if t > window_start
+        ]
+        if len(_rate_limit_store[key]) >= limit_per_minute:
+            return False
+        _rate_limit_store[key].append(now)
+        return True
+
 
 async def execute(req: ToolCallRequest,
                   max_retries: int = settings.max_retries_per_tool) -> ToolCallResult:
@@ -28,6 +56,28 @@ async def execute(req: ToolCallRequest,
             error=ToolError(code="PERMISSION_DENIED",
                             message=perm.reason, retryable=False),
             tool_name=req.tool_name, step_number=req.step_number)
+
+    # Enforce rate limit
+    rate_ok = await _check_rate_limit(
+        req.tool_name, req.user_id, spec.rate_limit_per_minute
+    )
+    if not rate_ok:
+        log.warning("tool.rate_limited",
+                    tool=req.tool_name,
+                    user=req.user_id,
+                    limit=spec.rate_limit_per_minute,
+                    trace_id=req.trace_id)
+        return ToolCallResult(
+            success=False,
+            error=ToolError(
+                code="RATE_LIMITED",
+                message=(f"Tool '{req.tool_name}' exceeded rate limit "
+                         f"({spec.rate_limit_per_minute} calls/min)"),
+                retryable=False,
+            ),
+            tool_name=req.tool_name,
+            step_number=req.step_number,
+        )
 
     retry_count = 0
     while True:

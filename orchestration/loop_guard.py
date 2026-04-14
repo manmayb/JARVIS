@@ -41,18 +41,18 @@ class LoopGuard:
 
     def check(self, current_step: int) -> Optional[Violation]:
         if current_step >= self.max_steps:
-            return self.Violation("MAX_STEPS", f"Reached {self.max_steps} steps")
+            return self.Violation("max_steps_exceeded", f"Reached {self.max_steps} steps")
         if self._no_progress_count >= self.max_no_progress:
-            return self.Violation("NO_PROGRESS",
+            return self.Violation("no_progress",
                 f"{self._no_progress_count} consecutive steps without progress")
         if self._same_tool_streak >= self.max_same_tool_streak:
-            return self.Violation("SAME_TOOL_STREAK",
+            return self.Violation("same_tool_streak",
                 f"'{self._last_tool}' called {self._same_tool_streak} times in a row")
         recent = self._steps[-self.max_identical_calls:]
         if len(recent) == self.max_identical_calls:
             sigs = [f"{s.tool_name}:{s.params_hash}" for s in recent]
             if Counter(sigs).most_common(1)[0][1] >= self.max_identical_calls:
-                return self.Violation("IDENTICAL_CALLS",
+                return self.Violation("identical_calls",
                     f"Identical call repeated {self.max_identical_calls} times")
         return None
 

@@ -31,5 +31,11 @@ def truncate_history(messages: list[Message]) -> tuple[list[Message], bool]:
     return result, True
 
 def truncation_notice(dropped: int) -> Message:
-    return Message(role="system",
-                   content=f"[{dropped} earlier messages omitted. Continue from below.]")
+    return Message(
+        role="user",
+        content=(
+            f"[System note: {dropped} earlier messages were removed to fit "
+            f"the context window. Continue from the most recent messages below. "
+            f"Do not reference events you cannot see in the current context.]"
+        )
+    )
