@@ -75,17 +75,20 @@ async def call(messages: list[dict], system: str,
             system=system, messages=messages,
         )
     except anthropic.AuthenticationError as exc:
+        log.error("llm.auth_error", error=str(exc), trace_id=trace_id)
         raise ConfigurationError(
             "ANTHROPIC_API_KEY was rejected by Anthropic. Check the value in .env"
         ) from exc
     except anthropic.BadRequestError as exc:
         message = str(exc)
+        log.error("llm.bad_request", error=message, trace_id=trace_id)
         if "credit balance is too low" in message.lower():
             raise ConfigurationError(
                 "Anthropic account has insufficient credits. Add credits in billing and retry."
             ) from exc
         raise AgentError(f"Anthropic request rejected: {message}") from exc
     except anthropic.APIError as exc:
+        log.error("llm.api_error", error=str(exc), trace_id=trace_id)
         raise AgentError(f"Anthropic API error: {exc}") from exc
 
     latency = int((time.monotonic() - start) * 1000)

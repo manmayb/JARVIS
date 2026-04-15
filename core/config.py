@@ -4,7 +4,7 @@ Dependencies used by this project include: anthropic, fastapi, pydantic,
 pydantic-settings, aiofiles, httpx, sympy, aiosqlite.
 """
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
 class Settings(BaseSettings):
@@ -32,5 +32,23 @@ class Settings(BaseSettings):
 
     # Phase 3 — Planner
     enable_planner: bool = True
+
+    # ── Integration credentials (all optional) ──
+    # Slack
+    slack_bot_token: Optional[str] = None
+
+    # Google Calendar (path to OAuth2 credentials JSON)
+    google_calendar_credentials_path: Optional[str] = None
+
+    # Email / SMTP
+    smtp_host: Optional[str] = None
+    smtp_port: int = 587
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+
+    # Notion
+    notion_token: Optional[str] = None
+
+    model_config = SettingsConfigDict(env_file=".env")
 
 settings = Settings()

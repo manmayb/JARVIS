@@ -13,6 +13,7 @@ from models.session_store import (
     save_task_result,
 )
 from orchestration.react_loop import run as run_loop
+from orchestration.semantic_extractor import schedule_fact_extraction
 
 log = get_logger(__name__)
 
@@ -127,3 +128,7 @@ async def _finalize(request: TaskRequest, result: TaskResult,
         except Exception as exc:
             log.warning("episodic.store_failed", error=str(exc),
                         trace_id=request.trace_id)
+
+    # Phase 2: Extract semantic memory background task
+    if settings.enable_semantic_memory:
+        schedule_fact_extraction(request.user_id, message_history, request.trace_id)

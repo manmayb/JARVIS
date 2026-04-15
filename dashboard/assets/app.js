@@ -1,9 +1,8 @@
 /**
- * Jarvis Dashboard — client-side logic.
- * Pure vanilla JS: fetches API data, renders pages, handles chat.
+ * JARVIS Dashboard — Neural Link v3.0
  */
 
-const API = '';  // same origin
+const API = '';
 
 // ── State ──
 let currentPage = 'overview';
@@ -11,25 +10,43 @@ let currentPage = 'overview';
 // ── Init ──
 document.addEventListener('DOMContentLoaded', () => {
   setupNav();
+  setupTheme();
   navigate('overview');
-  // Auto-refresh stats every 15s
   setInterval(() => { if (currentPage === 'overview') loadOverview(); }, 15000);
 });
 
+// ── Theme (Power Modes) ──
+function setupTheme() {
+  const toggle = document.getElementById('theme-toggle');
+  const html = document.documentElement;
+  const saved = localStorage.getItem('jarvis-hud-theme') || 'dark';
+  
+  const apply = (theme) => {
+    html.setAttribute('data-theme', theme);
+    localStorage.setItem('jarvis-hud-theme', theme);
+    toggle.querySelector('.theme-text').textContent = theme === 'dark' ? 'Full Power' : 'Energy Save';
+  };
+
+  apply(saved);
+  toggle.onclick = () => {
+    const current = html.getAttribute('data-theme');
+    apply(current === 'dark' ? 'light' : 'dark');
+  };
+}
 
 // ── Navigation ──
 function setupNav() {
-  document.querySelectorAll('.nav-item').forEach(btn => {
-    btn.addEventListener('click', () => navigate(btn.dataset.page));
+  document.querySelectorAll('.nav-link').forEach(btn => {
+    btn.onclick = () => navigate(btn.dataset.page);
   });
 }
 
 function navigate(page) {
   currentPage = page;
-  document.querySelectorAll('.nav-item').forEach(n =>
+  document.querySelectorAll('.nav-link').forEach(n =>
     n.classList.toggle('active', n.dataset.page === page));
-  document.querySelectorAll('.page').forEach(p =>
-    p.classList.toggle('active', p.id === `page-${page}`));
+  document.querySelectorAll('.page-view').forEach(p =>
+    p.classList.toggle('visible', p.id === `page-${page}`));
 
   const loaders = {
     overview: loadOverview,
@@ -41,8 +58,7 @@ function navigate(page) {
   (loaders[page] || (() => {}))();
 }
 
-
-// ── Overview ──
+// ── Diagnostics ──
 async function loadOverview() {
   try {
     const [stats, sessions] = await Promise.all([
@@ -50,59 +66,49 @@ async function loadOverview() {
       fetch(`${API}/api/sessions`).then(r => r.json()),
     ]);
 
-    document.getElementById('stat-tools').textContent = stats.tools_loaded;
-    document.getElementById('stat-sessions').textContent = sessions.sessions.length;
+    document.getElementById('stat-tools').textContent = stats.tools_loaded.toString().padStart(2, '0');
+    document.getElementById('stat-sessions').textContent = sessions.sessions.length.toString().padStart(2, '0');
 
     const llm = stats.llm_cache;
-    document.getElementById('stat-cache-hit').textContent =
-      `${(llm.hit_rate * 100).toFixed(1)}%`;
+    document.getElementById('stat-cache-hit').textContent = `${(llm.hit_rate * 100).toFixed(0)}%`;
     document.getElementById('stat-cache-size').textContent = llm.size;
 
-    // Features
     const features = document.getElementById('features-list');
     const s = stats.settings;
     features.innerHTML = `
-      <tr><td>Episodic Memory</td><td>${badge(s.enable_episodic_memory)}</td></tr>
-      <tr><td>Semantic Memory</td><td>${badge(s.enable_semantic_memory)}</td></tr>
-      <tr><td>Task Planner</td><td>${badge(s.enable_planner)}</td></tr>
-      <tr><td>Redis Backend</td><td>${badge(s.redis_url, 'info')}</td></tr>
-      <tr><td>Max Steps</td><td><span class="badge accent">${s.max_steps}</span></td></tr>
-      <tr><td>Global Timeout</td><td><span class="badge accent">${s.global_timeout_seconds}s</span></td></tr>
+      <tr><td>Episodic Core</td><td>${badge(s.enable_episodic_memory)}</td></tr>
+      <tr><td>Semantic Logic</td><td>${badge(s.enable_semantic_memory)}</td></tr>
+      <tr><td>Trajectory Planner</td><td>${badge(s.enable_planner)}</td></tr>
+      <tr><td>Remote Sync (Redis)</td><td>${badge(s.redis_url, 'info')}</td></tr>
     `;
 
-    // Recent sessions
     const tbody = document.getElementById('recent-sessions');
     tbody.innerHTML = sessions.sessions.slice(0, 6).map(s => `
       <tr>
-        <td><code style="color: var(--accent-light)">${s.session_id}</code></td>
+        <td><code style="color: var(--accent)">${s.session_id.slice(-8)}</code></td>
         <td>${s.user_id}</td>
-        <td><span class="badge accent">${s.message_count}</span></td>
-        <td style="color: var(--text-muted)">${timeAgo(s.updated_at)}</td>
+        <td><span class="status-badge info">${s.message_count} OPS</span></td>
+        <td style="color: var(--text-muted); font-size: 11px; font-family: var(--font-mono)">${timeAgo(s.updated_at).toUpperCase()}</td>
       </tr>
     `).join('');
-  } catch (e) {
-    console.error('Failed to load overview:', e);
-  }
+  } catch (e) { console.error(e); }
 }
 
-
-// ── Sessions ──
+// ── Archives ──
 async function loadSessions() {
   const { sessions } = await fetch(`${API}/api/sessions`).then(r => r.json());
   const tbody = document.getElementById('all-sessions');
   tbody.innerHTML = sessions.map(s => `
     <tr>
-      <td><code style="color: var(--accent-light)">${s.session_id}</code></td>
+      <td><code style="color: var(--accent)">${s.session_id}</code></td>
       <td>${s.user_id}</td>
-      <td><span class="badge accent">${s.message_count}</span></td>
-      <td style="color: var(--text-muted)">${s.created_at || '-'}</td>
-      <td style="color: var(--text-muted)">${timeAgo(s.updated_at)}</td>
+      <td><span class="status-badge info">${s.message_count} MSGS</span></td>
+      <td style="color: var(--text-muted); font-family: var(--font-mono)">${timeAgo(s.updated_at).toUpperCase()}</td>
     </tr>
   `).join('');
 }
 
-
-// ── Memory ──
+// ── Cognition ──
 async function loadMemory() {
   try {
     const [episodes, facts] = await Promise.all([
@@ -111,58 +117,44 @@ async function loadMemory() {
     ]);
 
     const epContainer = document.getElementById('episodes-list');
-    if (episodes.episodes.length === 0) {
-      epContainer.innerHTML = '<p style="color: var(--text-muted)">No episodes stored yet. Interact with the agent to build memory.</p>';
-    } else {
-      epContainer.innerHTML = episodes.episodes.map(ep => `
-        <div class="episode-card">
-          <div class="summary">${escapeHtml(ep.summary)}</div>
-          <div class="meta-row">
-            <span>🔗 ${ep.task_id}</span>
-            <span>📁 ${ep.session_id}</span>
-            <span>🕐 ${timeAgo(ep.created_at)}</span>
-          </div>
+    epContainer.innerHTML = episodes.episodes.length === 0 
+      ? '<p class="page-subtitle">ARCHIVE EMPTY</p>'
+      : episodes.episodes.map(ep => `
+        <div class="memory-card">
+          <p style="font-size: 13px;">${escapeHtml(ep.summary)}</p>
+          <div class="message-meta">${ep.task_id} // ${timeAgo(ep.created_at).toUpperCase()}</div>
         </div>
       `).join('');
-    }
 
     const factsContainer = document.getElementById('facts-list');
-    if (facts.facts.length === 0) {
-      factsContainer.innerHTML = '<p style="color: var(--text-muted)">No user facts recorded yet.</p>';
-    } else {
-      factsContainer.innerHTML = `
-        <div class="table-wrapper">
+    factsContainer.innerHTML = facts.facts.length === 0
+      ? '<p class="page-subtitle">NO SEMANTIC DATA</p>'
+      : `
+        <div class="data-card">
           <table>
-            <thead><tr><th>Key</th><th>Value</th><th>Confidence</th><th>Source</th></tr></thead>
+            <thead><tr><th>Key</th><th>Weight</th></tr></thead>
             <tbody>
               ${facts.facts.map(f => `
                 <tr>
                   <td><strong>${escapeHtml(f.key)}</strong></td>
-                  <td>${escapeHtml(f.value)}</td>
-                  <td><span class="badge ${f.confidence >= 0.8 ? 'success' : 'warning'}">${f.confidence}</span></td>
-                  <td style="color: var(--text-muted)">${f.source}</td>
+                  <td><span class="status-badge ${f.confidence >= 0.8 ? 'success' : 'warning'}">${f.confidence}</span></td>
                 </tr>
               `).join('')}
             </tbody>
           </table>
         </div>
       `;
-    }
-  } catch (e) {
-    console.error('Failed to load memory:', e);
-  }
+  } catch (e) { console.error(e); }
 }
 
-
-// ── Chat ──
+// ── Neural Link ──
 let chatSessionId = null;
-
 function initChat() {
-  if (chatSessionId) return; // already init
+  if (chatSessionId) return;
   const input = document.getElementById('chat-input');
   const btn = document.getElementById('chat-send');
-  btn.addEventListener('click', sendMessage);
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+  btn.onclick = sendMessage;
+  input.onkeydown = e => { if (e.key === 'Enter') sendMessage(); };
 }
 
 async function sendMessage() {
@@ -172,86 +164,74 @@ async function sendMessage() {
 
   input.value = '';
   addChatBubble('user', msg);
-
-  const loadingId = addChatBubble('assistant', '<div class="loader"></div>');
+  const loadingId = addChatBubble('assistant', `
+    <div class="typing-loader">
+      <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+    </div>
+  `);
 
   try {
-    const body = { message: msg };
-    if (chatSessionId) body.session_id = chatSessionId;
-
     const resp = await fetch(`${API}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ message: msg, session_id: chatSessionId }),
     });
     const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'CONNECTION TERMINATED');
+    
     chatSessionId = data.session_id;
-
     removeChatBubble(loadingId);
-    const meta = `${data.steps_taken} steps · ${data.tools_used.join(', ') || 'no tools'} · ${data.status}`;
+    const meta = `STEP:${data.steps_taken} // PROTOCOLS:[${data.tools_used.join(',') || 'NEURAL'}] // STATUS:${data.status}`;
     addChatBubble('assistant', escapeHtml(data.response), meta);
   } catch (e) {
     removeChatBubble(loadingId);
-    addChatBubble('assistant', `Error: ${e.message}`, '');
+    addChatBubble('assistant', `<span style="color: var(--danger)">CRITICAL ERROR: ${e.message}</span>`);
   }
 }
 
 let msgCounter = 0;
 function addChatBubble(role, html, meta = '') {
-  const id = `msg-${++msgCounter}`;
   const area = document.getElementById('chat-messages');
   const div = document.createElement('div');
-  div.className = `chat-msg ${role}`;
-  div.id = id;
-  div.innerHTML = html + (meta ? `<div class="meta">${meta}</div>` : '');
+  div.className = `message-bubble ${role}`;
+  div.id = `m-${++msgCounter}`;
+  div.innerHTML = html + (meta ? `<div class="message-meta">${meta}</div>` : '');
   area.appendChild(div);
   area.scrollTop = area.scrollHeight;
-  return id;
+  return div.id;
 }
 
-function removeChatBubble(id) {
-  document.getElementById(id)?.remove();
-}
+function removeChatBubble(id) { document.getElementById(id)?.remove(); }
 
-
-// ── Tools ──
+// ── Protocols ──
 async function loadTools() {
   const tools = await fetch(`${API}/tools`).then(r => r.json());
   const tbody = document.getElementById('tools-list');
   tbody.innerHTML = tools.map(t => `
     <tr>
-      <td><strong style="color: var(--accent-light)">${t.name}</strong></td>
-      <td style="max-width: 300px">${escapeHtml(t.description)}</td>
-      <td><span class="badge ${tierClass(t.permission_tier)}">${t.permission_tier}</span></td>
-      <td><span class="badge accent">${t.rate_limit_per_minute}/min</span></td>
-      <td>${t.timeout_seconds}s</td>
+      <td><strong style="color: var(--accent)">${t.name.toUpperCase()}</strong></td>
+      <td style="color: var(--text-secondary); font-size: 13px;">${escapeHtml(t.description)}</td>
+      <td><span class="status-badge ${tierClass(t.permission_tier)}">${t.permission_tier}</span></td>
+      <td><span class="status-badge info">${t.rate_limit_per_minute}/M</span></td>
     </tr>
   `).join('');
 }
 
-
 // ── Helpers ──
 function badge(val, cls = 'success') {
-  if (val === true || val === 'configured')
-    return `<span class="badge ${cls}">● Enabled</span>`;
-  return '<span class="badge danger">○ Disabled</span>';
+  return val ? `<span class="status-badge ${cls}">ONLINE</span>` : '<span class="status-badge danger">OFFLINE</span>';
 }
-
-function tierClass(tier) {
-  return { read: 'success', write: 'warning', destructive: 'danger' }[tier] || 'info';
-}
-
+function tierClass(t) { return { read: 'success', write: 'warning', destructive: 'danger' }[t] || 'info'; }
 function timeAgo(ts) {
   if (!ts) return '-';
   const diff = (Date.now() - new Date(ts + 'Z').getTime()) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
+  if (diff < 60) return 'Just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}M ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}H ago`;
+  return `${Math.floor(diff / 86400)}D ago`;
 }
-
-function escapeHtml(str) {
+function escapeHtml(s) {
   const d = document.createElement('div');
-  d.textContent = str;
+  d.textContent = s;
   return d.innerHTML;
 }

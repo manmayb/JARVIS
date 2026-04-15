@@ -9,6 +9,7 @@ class ToolSpec(BaseModel):
     task_types: list[str]
     rate_limit_per_minute: int = 20
     timeout_seconds: int = 10
+    cache_ttl_seconds: int = 0
     dry_run_supported: bool = False
 
 class ToolCallRequest(BaseModel):

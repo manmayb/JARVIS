@@ -6,6 +6,7 @@ from tools.schemas import ToolCallRequest, ToolCallResult, ToolError
 from core.config import settings
 from core.errors import ToolNotFoundError
 from core.observability import get_logger
+from core.cache import tool_cache, TTLCache
 
 log = get_logger(__name__)
 RETRY_DELAYS = [1, 5]
@@ -79,6 +80,15 @@ async def execute(req: ToolCallRequest,
             step_number=req.step_number,
         )
 
+    if spec.cache_ttl_seconds > 0:
+        cache_key = TTLCache._make_key(req.tool_name, req.parameters)
+        cached = await tool_cache.get(cache_key)
+        if cached is not None:
+            log.info("tool.cache_hit", tool=req.tool_name, trace_id=req.trace_id)
+            return ToolCallResult(success=True, output=cached, latency_ms=0,
+                                  from_cache=True, tool_name=req.tool_name,
+                                  step_number=req.step_number)
+
     retry_count = 0
     while True:
         start = time.monotonic()
@@ -88,6 +98,8 @@ async def execute(req: ToolCallRequest,
             latency = int((time.monotonic() - start) * 1000)
             log.info("tool.success", tool=req.tool_name,
                      latency_ms=latency, trace_id=req.trace_id)
+            if spec.cache_ttl_seconds > 0:
+                await tool_cache.set(cache_key, raw, ttl=spec.cache_ttl_seconds)
             return ToolCallResult(success=True, output=raw, latency_ms=latency,
                                   tool_name=req.tool_name,
                                   step_number=req.step_number)
