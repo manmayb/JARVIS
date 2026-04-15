@@ -1,5 +1,12 @@
+import asyncio
 import json, sys
 from datetime import datetime, timezone
+
+
+_METRICS = {
+    "facts_extracted_total": 0,
+}
+_METRIC_LOCK = asyncio.Lock()
 
 class StructuredLogger:
     def __init__(self, name: str):
@@ -22,3 +29,12 @@ class StructuredLogger:
 
 def get_logger(name: str) -> StructuredLogger:
     return StructuredLogger(name)
+
+
+async def increment_facts_extracted_total(amount: int = 1) -> None:
+    async with _METRIC_LOCK:
+        _METRICS["facts_extracted_total"] += max(0, int(amount))
+
+
+def get_observability_metrics() -> dict[str, int]:
+    return dict(_METRICS)

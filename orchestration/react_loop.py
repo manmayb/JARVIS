@@ -11,13 +11,18 @@ import asyncio, time, json
 from core.schemas import TaskRequest, Message
 from core.config import settings
 from core.llm_parser import parse_think_output
-from core.observability import get_logger
+from core.observability import (
+    get_logger,
+    increment_facts_extracted_total,
+)
 from core.cache import tool_cache, TTLCache
 from orchestration.llm_router import call as llm_call
 from orchestration.context_assembler import build_enriched, build
 from orchestration.loop_guard import LoopGuard, Step, hash_params
 from tools.executor import execute as tool_execute
 from tools.schemas import ToolCallRequest
+from models.session_store import save_session
+from orchestration.semantic_extractor import extract_facts, save_facts
 from pydantic import BaseModel
 from typing import Optional
 
@@ -31,6 +36,47 @@ class LoopResult(BaseModel):
     exit_reason: str
     steps: int
     tool_calls_log: list[dict] = []
+
+
+async def _persist_session_snapshot(request: TaskRequest,
+                                    message_history: list[Message]) -> None:
+    """Persist the current turn state so the session can be restored later."""
+    await save_session(
+        request.session_id,
+        {
+            "session_id": request.session_id,
+            "user_id": request.user_id,
+            "trace_id": request.trace_id,
+            "steps_completed": request._steps_completed,
+            "last_thought": request._last_thought,
+            "tool_calls_log": request._tool_calls_log,
+            "messages": message_history,
+        },
+    )
+
+
+async def _background_extract(session_id: str,
+                              user_id: str,
+                              user_message: str,
+                              assistant_reply: str,
+                              trace_id: str) -> None:
+    """Extract and persist semantic facts without delaying the response."""
+    try:
+        facts = await extract_facts(user_message, assistant_reply, trace_id)
+        if not facts:
+            return
+        saved = await save_facts(user_id, facts)
+        if saved > 0:
+            await increment_facts_extracted_total(saved)
+        log.info("facts.extracted.background",
+                 trace_id=trace_id,
+                 session_id=session_id,
+                 saved=saved)
+    except Exception as exc:
+        log.warning("facts.extraction.background_failed",
+                    trace_id=trace_id,
+                    session_id=session_id,
+                    error=str(exc))
 
 
 async def run(request: TaskRequest,
@@ -60,6 +106,16 @@ async def run(request: TaskRequest,
         message_history.append(Message(role="assistant", content=llm_resp.content))
 
         if thought.action_type == "final_answer":
+            await _persist_session_snapshot(request, message_history)
+            asyncio.create_task(
+                _background_extract(
+                    session_id=request.session_id,
+                    user_id=request.user_id,
+                    user_message=request.user_input,
+                    assistant_reply=thought.final_answer or "Done.",
+                    trace_id=trace_id,
+                )
+            )
             log.info("loop.final_answer", steps=step_count, trace_id=trace_id)
             return LoopResult(answer=thought.final_answer or "Done.",
                               exit_reason="completed", steps=step_count,
@@ -67,6 +123,16 @@ async def run(request: TaskRequest,
 
         violation = guard.check(step_count)
         if violation:
+            await _persist_session_snapshot(request, message_history)
+            asyncio.create_task(
+                _background_extract(
+                    session_id=request.session_id,
+                    user_id=request.user_id,
+                    user_message=request.user_input,
+                    assistant_reply=_partial_answer(message_history),
+                    trace_id=trace_id,
+                )
+            )
             log.warning("loop.guard_violation", code=violation.code,
                         message=violation.message, trace_id=trace_id)
             return LoopResult(answer=_partial_answer(message_history),
@@ -154,6 +220,8 @@ async def run(request: TaskRequest,
             role="user",
             content=f"<observation>{observation}</observation>"
         ))
+
+        await _persist_session_snapshot(request, message_history)
 
 
 def _partial_answer(history: list[Message]) -> str:

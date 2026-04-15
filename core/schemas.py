@@ -1,7 +1,10 @@
-from pydantic import BaseModel, Field, PrivateAttr
-from typing import Any, Optional
+"""Core Pydantic schemas shared across the JARVIS V4 system."""
+
 from datetime import datetime
+from typing import Optional
 import uuid
+
+from pydantic import BaseModel, Field, PrivateAttr
 
 class Message(BaseModel):
     role: str
@@ -35,14 +38,29 @@ class ThinkOutput(BaseModel):
     tool_parameters: Optional[dict]
     final_answer: Optional[str]
 
+
+# ── HTTP Layer Schemas ──
+
 class ChatRequest(BaseModel):
+    """Inbound chat request."""
     message: str
     session_id: Optional[str] = None
+    user_id: Optional[str] = None
 
 class ChatResponse(BaseModel):
+    """Standard chat response envelope."""
     response: str
     session_id: str
     trace_id: str
-    steps_taken: Optional[int]
-    tools_used: list[str]
+    steps_taken: Optional[int] = None
+    tools_used: list[str] = []
+    tool_calls_made: int = 0
     status: str
+
+
+class ErrorResponse(BaseModel):
+    """Standard error envelope returned on all 4xx/5xx chat failures."""
+    error: str
+    error_code: str
+    trace_id: str
+    session_id: Optional[str] = None

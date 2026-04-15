@@ -2,10 +2,14 @@
 
 Tools declare their required environment variables via ``requires=[...]``.
 During ``load_all_tools()``, any tool whose env vars are missing or empty
-is silently skipped — the LLM never sees it.
+is skipped so the LLM never sees it.
 """
 
+from __future__ import annotations
+
+import importlib
 import os
+import sys
 from typing import Callable, Optional
 from tools.schemas import ToolSpec
 from core.errors import ToolNotFoundError
@@ -49,6 +53,10 @@ def register_tool(name: str, description: str, parameters: dict,
     return decorator
 
 
+# Backwards-compatible alias for the decorator name referenced in docs.
+tool = register_tool
+
+
 def _check_env_vars(required: list[str]) -> list[str]:
     """Return list of missing or empty env var names."""
     missing = []
@@ -64,24 +72,32 @@ def load_all_tools():
     _REGISTRY.clear()
     _PENDING.clear()
 
-    # Import all tool definition modules — this populates _PENDING
-    import tools.definitions.web_search   # noqa
-    import tools.definitions.calculator   # noqa
-    import tools.definitions.file_ops     # noqa
-    import tools.definitions.python_exec  # noqa
-    import tools.definitions.calendar     # noqa
-    import tools.definitions.email        # noqa
-    import tools.definitions.notion       # noqa
-    import tools.definitions.slack        # noqa
+    # Import all tool definition modules — this populates _PENDING.
+    # Reloading makes the registry idempotent across repeated calls.
+    module_names = [
+        "tools.definitions.web_search",
+        "tools.definitions.calculator",
+        "tools.definitions.file_ops",
+        "tools.definitions.python_exec",
+        "tools.definitions.calendar",
+        "tools.definitions.email",
+        "tools.definitions.notion",
+        "tools.definitions.slack",
+    ]
+    for module_name in module_names:
+        if module_name in sys.modules:
+            importlib.reload(sys.modules[module_name])
+        else:
+            importlib.import_module(module_name)
 
     # Gate by env vars
     for spec, fn, required_vars in _PENDING:
         if required_vars:
             missing = _check_env_vars(required_vars)
             if missing:
-                log.warning("tool.skipped",
-                            tool=spec.name,
-                            missing_env_vars=", ".join(missing))
+                log.warning(
+                    f"Tool '{spec.name}' not registered — missing env vars: {missing}"
+                )
                 continue
         _REGISTRY[spec.name] = (spec, fn)
         log.info("tool.registered", tool=spec.name)

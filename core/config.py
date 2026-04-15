@@ -36,8 +36,11 @@ class Settings(BaseSettings):
     # ── Integration credentials (all optional) ──
     # Slack
     slack_bot_token: Optional[str] = None
+    slack_default_channel: Optional[str] = None
 
-    # Google Calendar (path to OAuth2 credentials JSON)
+    # Google Calendar OAuth
+    google_calendar_client_id: Optional[str] = None
+    google_calendar_client_secret: Optional[str] = None
     google_calendar_credentials_path: Optional[str] = None
 
     # Email / SMTP

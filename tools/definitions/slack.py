@@ -1,51 +1,60 @@
 """Slack integration tool.
 
-STATUS: NOT CONFIGURED — requires a Slack Bot Token in .env.
-The tool is registered so the LLM can see it, but will explicitly report
-its unconfigured state instead of silently faking success.
+Channels can be provided as Slack channel names like ``#general`` or as
+channel IDs like ``C0123456789``. The tool stays hidden unless the Slack
+credentials are configured.
 """
 
-from tools.registry import register_tool
 from core.config import settings
-
-
-def _is_configured() -> bool:
-    """Check whether Slack credentials are available."""
-    token = getattr(settings, "slack_bot_token", None)
-    return bool(token and not token.startswith("not_set"))
+from tools.registry import register_tool
 
 
 @register_tool(
-    name="slack_send_message",
-    description="Send a message to a Slack channel or user. Requires SLACK_BOT_TOKEN to be configured.",
+    name="send_slack_message",
+    description=(
+        "Send a message to Slack. `channel` may be a channel name such as "
+        "#general or a channel ID; if omitted, the default channel is used."
+    ),
     parameters={
         "type": "object",
         "properties": {
-            "channel": {"type": "string", "description": "Channel name (e.g. #general) or user ID"},
-            "message": {"type": "string", "description": "The message text to send"}
+            "message": {"type": "string", "description": "The message text to send"},
+            "channel": {
+                "type": "string",
+                "description": "Optional Slack channel name (e.g. #general) or channel ID",
+            },
         },
-        "required": ["channel", "message"]
+        "required": ["message"],
     },
     permission_tier="user",
-    task_types=["action"]
+    task_types=["action"],
+    requires=["SLACK_BOT_TOKEN", "SLACK_DEFAULT_CHANNEL"],
 )
-async def slack_send_message(channel: str, message: str) -> str:
-    if not _is_configured():
-        return (
-            "TOOL_NOT_CONFIGURED: Slack integration is not set up. "
-            "To enable it, add SLACK_BOT_TOKEN to your .env file and install the slack-sdk package. "
-            "Please inform the user that this action could not be completed."
-        )
+async def send_slack_message(message: str, channel: str | None = None) -> dict:
+    """Send a Slack message asynchronously.
+
+    Args:
+        message: The message body to post.
+        channel: Optional channel name like ``#general`` or a channel ID.
+            Falls back to ``SLACK_DEFAULT_CHANNEL`` when omitted.
+
+    Returns:
+        ``{"status": "sent", "channel": ..., "ts": ...}`` on success, or
+        a structured error dictionary on failure.
+    """
+    resolved_channel = channel or settings.slack_default_channel
+    if not resolved_channel:
+        return {"status": "error", "detail": "No Slack channel configured"}
 
     try:
-        from slack_sdk.web.async_client import AsyncWebClient  # type: ignore
+        from slack_sdk.errors import SlackApiError
+        from slack_sdk.web.async_client import AsyncWebClient
+
         client = AsyncWebClient(token=settings.slack_bot_token)
-        resp = await client.chat_postMessage(channel=channel, text=message)
-        return f"Message delivered to {channel}. Timestamp: {resp['ts']}"
-    except ImportError:
-        return (
-            "TOOL_NOT_CONFIGURED: slack-sdk is not installed. "
-            "Run: pip install slack-sdk"
-        )
+        response = await client.chat_postMessage(channel=resolved_channel, text=message)
+        return {"status": "sent", "channel": resolved_channel, "ts": response["ts"]}
+    except SlackApiError as exc:
+        detail = getattr(exc.response, "data", None) or str(exc)
+        return {"status": "error", "detail": str(detail)}
     except Exception as exc:
-        return f"TOOL_ERROR: Failed to send Slack message — {exc}"
+        return {"status": "error", "detail": str(exc)}

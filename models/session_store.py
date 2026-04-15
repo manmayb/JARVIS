@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from typing import Any
 from models.database import get_db
 from core.schemas import Message
 from core.observability import get_logger
@@ -9,6 +10,31 @@ log = get_logger(__name__)
 # Hard cap on messages stored per session.
 # Oldest messages are pruned automatically when exceeded.
 MAX_MESSAGES_PER_SESSION = 100
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, Message):
+        return value.model_dump(mode="json")
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+async def _ensure_session_state_table() -> None:
+    db = await get_db()
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_state (
+            session_id TEXT PRIMARY KEY,
+            payload    TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+        )
+        """
+    )
+    await db.commit()
 
 
 async def get_or_create_session(session_id: str,
@@ -78,6 +104,51 @@ async def get_session_history(session_id: str,
         for row in reversed(rows)
     ]
     return messages
+
+
+async def save_session(session_id: str, session_data: dict[str, Any] | None = None) -> None:
+    """Serialize and persist a full session snapshot."""
+    await _ensure_session_state_table()
+    db = await get_db()
+    payload = json.dumps(session_data or {}, default=_json_default)
+    await db.execute(
+        """
+        INSERT INTO session_state (session_id, payload, updated_at)
+        VALUES (?, ?, datetime('now'))
+        ON CONFLICT(session_id) DO UPDATE SET
+            payload = excluded.payload,
+            updated_at = datetime('now')
+        """,
+        (session_id, payload),
+    )
+    await db.commit()
+
+
+async def load_session(session_id: str) -> dict[str, Any] | None:
+    """Load a serialized session snapshot by session ID."""
+    await _ensure_session_state_table()
+    db = await get_db()
+    async with db.execute(
+        "SELECT payload FROM session_state WHERE session_id = ?",
+        (session_id,),
+    ) as cursor:
+        row = await cursor.fetchone()
+
+    if not row:
+        return None
+
+    data = json.loads(row[0])
+    if isinstance(data, dict) and "messages" in data:
+        data["messages"] = [
+            Message(
+                role=message["role"],
+                content=message["content"],
+                timestamp=datetime.fromisoformat(message["timestamp"]),
+            )
+            for message in data.get("messages", [])
+            if isinstance(message, dict) and "role" in message and "content" in message
+        ]
+    return data
 
 
 async def save_task_result(task_id: str, session_id: str, trace_id: str,

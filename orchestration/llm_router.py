@@ -10,7 +10,7 @@ from functools import lru_cache
 from core.config import settings
 from core.errors import AgentError, ConfigurationError
 from core.observability import get_logger
-from core.tokenizer import count_messages_tokens
+from core import tokenizer
 from core.cache import llm_cache, TTLCache
 from pydantic import BaseModel
 
@@ -55,7 +55,8 @@ async def call(messages: list[dict], system: str,
         )
 
     # ── Token-accurate counting ──
-    prompt_tokens = count_messages_tokens(messages)
+    estimated_input = tokenizer.estimate(messages)
+    prompt_tokens = estimated_input
     model         = _select_model(prompt_tokens, task_type)
     
     # ── Cache lookup ──
@@ -103,6 +104,9 @@ async def call(messages: list[dict], system: str,
                          tokens_in=response.usage.input_tokens,
                          tokens_out=response.usage.output_tokens,
                          latency_ms=latency)
+
+    # Online token calibration (actual API usage vs local estimate)
+    await tokenizer.record_actual(estimated_input, response.usage.input_tokens)
 
     # ── Cache store (only cache successful responses) ──
     await llm_cache.set(cache_key, {

@@ -1,62 +1,82 @@
 """Email integration tool.
 
-Gated behind SMTP_HOST + SMTP_USER + SMTP_PASSWORD env vars — if any are
-missing, this tool is never registered and the LLM never sees it.
+Send mail through STARTTLS SMTP using async I/O only. The tool stays
+hidden unless the SMTP environment variables are configured.
 """
 
-from tools.registry import register_tool
+from email.message import EmailMessage
+from email.utils import getaddresses, make_msgid
+
 from core.config import settings
+from tools.registry import register_tool
+
+
+def _recipient_list(to: str, cc: str | None = None) -> list[str]:
+    recipients = [addr for _, addr in getaddresses([to, cc or ""]) if addr]
+    return recipients
 
 
 @register_tool(
-    name="email_send",
-    description="Send an email to a recipient. Provide to, subject, and body.",
+    name="send_email",
+    description=(
+        "Send an email to one or more recipients. Use a valid email address "
+        "for `to`; `cc` is optional and may contain comma-separated addresses."
+    ),
     parameters={
         "type": "object",
         "properties": {
             "to": {"type": "string", "description": "Recipient email address"},
             "subject": {"type": "string"},
             "body": {"type": "string"},
-            "cc": {"type": "string", "description": "Optional CC address"}
+            "cc": {"type": "string", "description": "Optional CC address or comma-separated list"},
         },
-        "required": ["to", "subject", "body"]
+        "required": ["to", "subject", "body"],
     },
     permission_tier="user",
     task_types=["action"],
-    requires=["SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD"]
+    requires=["SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD"],
 )
-async def email_send(to: str, subject: str, body: str,
-                     cc: str | None = None) -> str:
-    """Send an email via SMTP using aiosmtplib (async, STARTTLS).
+async def send_email(to: str, subject: str, body: str, cc: str | None = None) -> dict:
+    """Send an email asynchronously using SMTP STARTTLS.
 
-    Validates that `to` contains an @ symbol before attempting to send.
-    Returns a structured status message.
+    Args:
+        to: Primary recipient address. Must contain an ``@`` character.
+        subject: Email subject line.
+        body: Plain-text message body.
+        cc: Optional carbon-copy recipient(s), comma-separated.
+
+    Returns:
+        A dictionary with ``status='sent'`` and the generated ``message_id``
+        on success, or ``status='error'`` with a human-readable ``detail`` on
+        failure.
     """
     if "@" not in to:
-        return f"TOOL_ERROR: Invalid email address — '{to}' does not contain @."
+        return {"status": "error", "detail": f"Invalid email address: {to}"}
 
     try:
-        import aiosmtplib  # type: ignore
-        from email.message import EmailMessage
+        import aiosmtplib
 
         msg = EmailMessage()
-        msg["From"] = settings.smtp_user
+        msg["From"] = settings.smtp_user or ""
         msg["To"] = to
         msg["Subject"] = subject
         if cc:
             msg["Cc"] = cc
+
+        message_id = make_msgid()
+        msg["Message-ID"] = message_id
         msg.set_content(body)
 
-        result = await aiosmtplib.send(
+        recipients = _recipient_list(to, cc)
+        await aiosmtplib.send(
             msg,
             hostname=settings.smtp_host,
-            port=getattr(settings, "smtp_port", 587),
+            port=settings.smtp_port,
             username=settings.smtp_user,
             password=settings.smtp_password,
             start_tls=True,
+            recipients=recipients,
         )
-        return f"Email sent to {to} with subject '{subject}'."
-    except ImportError:
-        return "TOOL_ERROR: aiosmtplib not installed. Run: pip install aiosmtplib"
+        return {"status": "sent", "to": to, "message_id": message_id}
     except Exception as exc:
-        return f"TOOL_ERROR: Failed to send email — {exc}"
+        return {"status": "error", "detail": str(exc)}

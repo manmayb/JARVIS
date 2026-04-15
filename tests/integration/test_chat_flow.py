@@ -1,4 +1,5 @@
 import pytest
+import uuid
 from fastapi.testclient import TestClient
 from unittest.mock import patch, AsyncMock
 from core.schemas import ThinkOutput, TaskResult
@@ -26,7 +27,8 @@ def test_chat_flow_success():
         data = response.json()
         assert data["response"] == "The answer is 42."
         assert data["status"] == "completed"
-        assert data["trace_id"] == "trace_123"
+        # Route now generates a fresh trace ID at request entry.
+        uuid.UUID(data["trace_id"])
         mock_run_task.assert_called_once()
 
 def test_chat_flow_error_fallback():

@@ -23,31 +23,29 @@ from core.observability import get_logger
 from models.database import init_db, close_db
 from tools.registry import load_all_tools, list_tools
 
-_log = get_logger("api.app")
+logger = get_logger("api.app")
 _START_TIME = time.time()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Modern FastAPI lifespan handler replacing deprecated on_event."""
-    # ── Startup ──
     try:
         load_all_tools()
         await init_db()
         from core.state_backend import get_backend
         await get_backend()
-        _log.info("startup.complete", tools_loaded=len(list_tools()))
+        logger.info("JARVIS startup complete — tools loaded: %d" % len(list_tools()))
     except Exception as exc:
-        _log.error("startup.failed", error=str(exc))
+        logger.error("JARVIS startup failed", error=str(exc))
         raise
 
     yield
 
-    # ── Shutdown ──
     await close_db()
     from core.state_backend import close_backend
     await close_backend()
-    _log.info("shutdown.complete")
+    logger.info("JARVIS shutdown complete")
 
 
 app = FastAPI(title="Jarvis", version="2.0.0", lifespan=lifespan)
@@ -84,6 +82,8 @@ async def api_stats():
     from tools.registry import list_tools
     from core.cache import llm_cache, tool_cache
     from core.config import settings
+    from core.observability import get_observability_metrics
+    from core.tokenizer import get_calibration_stats
     
     # Real System Metrics
     # CPU: Normalize percent by core count for accurate HUD display
@@ -115,6 +115,8 @@ async def api_stats():
             "tools_loaded": len(list_tools()),
             "llm_cache_hit_rate": llm_cache.stats().get("hit_rate", 0),
             "cache_size": llm_cache.stats().get("size", 0),
+            "facts_extracted_total": get_observability_metrics().get("facts_extracted_total", 0),
+            "tokenizer_calibration": get_calibration_stats(),
             "settings": {
                 "enable_episodic": settings.enable_episodic_memory,
                 "enable_semantic": settings.enable_semantic_memory

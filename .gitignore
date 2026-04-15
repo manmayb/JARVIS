@@ -20,6 +20,7 @@ htmlcov/
 .env
 .env.*
 !.env.example
+token.json
 
 # OS / editor noise
 .DS_Store

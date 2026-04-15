@@ -1,58 +1,74 @@
-"""Google Calendar integration tool.
+"""Google Calendar integration tool."""
 
-Gated behind GOOGLE_CALENDAR_CREDENTIALS_PATH env var — if not set,
-this tool is never registered and the LLM never sees it.
-"""
+from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timezone
+
+from core.errors import ConfigurationError
+from core.oauth_google import get_calendar_service
 from tools.registry import register_tool
-from core.config import settings
 
 
 @register_tool(
-    name="calendar_get_events",
-    description="Retrieve today's events from the user's Google Calendar.",
-    parameters={"type": "object", "properties": {}},
+    name="list_events",
+    description=(
+        "List upcoming events from the user's primary Google Calendar. "
+        "`time_min` must be an RFC3339 timestamp or ISO-8601 string."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "max_results": {"type": "integer", "default": 10},
+            "time_min": {"type": "string", "description": "RFC3339/ISO-8601 start time"},
+        },
+    },
     permission_tier="base",
     task_types=["query"],
     cache_ttl_seconds=30,
-    requires=["GOOGLE_CALENDAR_CREDENTIALS_PATH"]
+    requires=["GOOGLE_CALENDAR_CLIENT_ID", "GOOGLE_CALENDAR_CLIENT_SECRET"],
 )
-async def calendar_get_events() -> str:
-    """List upcoming calendar events using the Google Calendar API.
-
-    Requires a valid OAuth2 credentials JSON file at the path specified
-    by GOOGLE_CALENDAR_CREDENTIALS_PATH.
-    """
+async def list_events(max_results: int = 10, time_min: str | None = None) -> dict:
+    """List events from the primary Google Calendar asynchronously."""
     try:
-        import asyncio
-        from core.oauth_google import get_calendar_service
         service = get_calendar_service()
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
-        result = await asyncio.to_thread(
-            lambda: service.events().list(
-                calendarId='primary', timeMin=now,
-                maxResults=10, singleEvents=True,
-                orderBy='startTime'
+        query_time = time_min or datetime.now(timezone.utc).isoformat()
+
+        def _call():
+            return service.events().list(
+                calendarId="primary",
+                timeMin=query_time,
+                maxResults=max_results,
+                singleEvents=True,
+                orderBy="startTime",
             ).execute()
-        )
-        events = result.get('items', [])
-        if not events:
-            return "No upcoming events found."
-        lines = [f"Found {len(events)} upcoming event(s):"]
-        for ev in events:
-            start = ev['start'].get('dateTime', ev['start'].get('date'))
-            lines.append(f"  • {start} — {ev.get('summary', 'Untitled')}")
-        return "\n".join(lines)
-    except ImportError:
-        return "TOOL_ERROR: google-api-python-client not installed."
+
+        result = await asyncio.to_thread(_call)
+        events = []
+        for item in result.get("items", []):
+            start = item.get("start", {}).get("dateTime") or item.get("start", {}).get("date")
+            events.append(
+                {
+                    "id": item.get("id"),
+                    "summary": item.get("summary", "Untitled"),
+                    "start": start,
+                    "end": item.get("end", {}).get("dateTime") or item.get("end", {}).get("date"),
+                    "htmlLink": item.get("htmlLink"),
+                }
+            )
+        return {"status": "ok", "events": events, "count": len(events)}
+    except ConfigurationError as exc:
+        return {"status": "error", "detail": str(exc)}
     except Exception as exc:
-        return f"TOOL_ERROR: {exc}"
+        return {"status": "error", "detail": str(exc)}
 
 
 @register_tool(
-    name="calendar_create_event",
-    description="Schedule a new event in the user's Google Calendar. Provide title, time, and optionally attendees.",
+    name="create_event",
+    description=(
+        "Create a Google Calendar event. Provide title and ISO-8601 start/end "
+        "timestamps; attendees should be email addresses."
+    ),
     parameters={
         "type": "object",
         "properties": {
@@ -60,39 +76,43 @@ async def calendar_get_events() -> str:
             "start_datetime": {"type": "string", "description": "ISO 8601 start time"},
             "end_datetime": {"type": "string", "description": "ISO 8601 end time"},
             "description": {"type": "string"},
-            "attendees": {"type": "array", "items": {"type": "string"}}
+            "attendees": {"type": "array", "items": {"type": "string"}},
         },
-        "required": ["title", "start_datetime", "end_datetime"]
+        "required": ["title", "start_datetime", "end_datetime"],
     },
     permission_tier="user",
     task_types=["action"],
-    requires=["GOOGLE_CALENDAR_CREDENTIALS_PATH"]
+    requires=["GOOGLE_CALENDAR_CLIENT_ID", "GOOGLE_CALENDAR_CLIENT_SECRET"],
 )
-async def calendar_create_event(title: str, start_datetime: str,
-                                 end_datetime: str,
-                                 description: str = "",
-                                 attendees: list[str] = []) -> str:
-    """Create a new Google Calendar event."""
+async def create_event(
+    title: str,
+    start_datetime: str,
+    end_datetime: str,
+    description: str = "",
+    attendees: list[str] | None = None,
+) -> dict:
+    """Create a new event in the primary Google Calendar."""
     try:
-        import asyncio
-        from core.oauth_google import get_calendar_service
         service = get_calendar_service()
         event_body = {
-            'summary': title,
-            'description': description,
-            'start': {'dateTime': start_datetime, 'timeZone': 'UTC'},
-            'end': {'dateTime': end_datetime, 'timeZone': 'UTC'},
+            "summary": title,
+            "description": description,
+            "start": {"dateTime": start_datetime},
+            "end": {"dateTime": end_datetime},
         }
         if attendees:
-            event_body['attendees'] = [{'email': a} for a in attendees]
+            event_body["attendees"] = [{"email": email} for email in attendees if email]
 
-        result = await asyncio.to_thread(
-            lambda: service.events().insert(
-                calendarId='primary', body=event_body
-            ).execute()
-        )
-        return f"Event created: '{title}' — {result.get('htmlLink', 'no link')}"
-    except ImportError:
-        return "TOOL_ERROR: google-api-python-client not installed."
+        def _call():
+            return service.events().insert(calendarId="primary", body=event_body).execute()
+
+        response = await asyncio.to_thread(_call)
+        return {
+            "status": "created",
+            "event_id": response["id"],
+            "html_link": response.get("htmlLink"),
+        }
+    except ConfigurationError as exc:
+        return {"status": "error", "detail": str(exc)}
     except Exception as exc:
-        return f"TOOL_ERROR: {exc}"
+        return {"status": "error", "detail": str(exc)}

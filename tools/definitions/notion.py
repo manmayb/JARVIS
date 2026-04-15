@@ -1,7 +1,7 @@
 """Notion integration tool.
 
-Gated behind NOTION_TOKEN env var — if not set, this tool is never
-registered and the LLM never sees it.
+Use a Notion integration token to keep the tool visible to the model.
+The page-creation tool requires a parent page UUID, not a URL.
 """
 
 from tools.registry import register_tool
@@ -68,8 +68,11 @@ async def notion_search(query: str) -> str:
 
 
 @register_tool(
-    name="notion_create_page",
-    description="Create a new page in a Notion workspace. Provide title, content, and parent_page_id (UUID, not URL).",
+    name="create_notion_page",
+    description=(
+        "Create a new page in Notion. `parent_page_id` must be a page UUID, "
+        "not a URL. Content lines are converted to paragraph blocks."
+    ),
     parameters={
         "type": "object",
         "properties": {
@@ -83,22 +86,28 @@ async def notion_search(query: str) -> str:
     task_types=["action"],
     requires=["NOTION_TOKEN"]
 )
-async def notion_create_page(title: str, content: str,
-                              parent_page_id: str) -> str:
-    """Create a new Notion page under the specified parent.
+async def create_notion_page(title: str, content: str, parent_page_id: str) -> dict:
+    """Create a Notion page beneath an existing parent page.
 
-    Content is split by newlines into paragraph blocks.
-    Lines longer than 2000 characters are split into multiple blocks.
-    parent_page_id must be a Notion page UUID, not a URL.
+    Args:
+        title: Page title.
+        content: Page body text. Newline-separated lines become paragraph
+            blocks, and lines longer than 2000 characters are split into
+            multiple blocks to satisfy Notion limits.
+        parent_page_id: The UUID of the parent page. This must be a UUID,
+            not a Notion page URL.
+
+    Returns:
+        ``{"status": "created", "page_id": ..., "url": ...}`` on
+        success or a structured error dictionary on failure.
     """
     try:
-        import httpx
+        from notion_client import AsyncClient
+        from notion_client.errors import APIResponseError
 
-        # Build paragraph blocks from content lines
         children = []
         for line in content.split("\n"):
-            # Split lines > 2000 chars
-            chunks = [line[i:i+2000] for i in range(0, max(len(line), 1), 2000)]
+            chunks = [line[i:i + 2000] for i in range(0, max(len(line), 1), 2000)]
             for chunk in chunks:
                 children.append({
                     "object": "block",
@@ -108,30 +117,20 @@ async def notion_create_page(title: str, content: str,
                     }
                 })
 
-        headers = {
-            "Authorization": f"Bearer {settings.notion_token}",
-            "Notion-Version": "2022-06-28",
-            "Content-Type": "application/json",
-        }
         payload = {
             "parent": {"page_id": parent_page_id},
             "properties": {
-                "title": [{"text": {"content": title}}]
+                "title": {
+                    "title": [{"text": {"content": title}}]
+                }
             },
-            "children": children[:100],  # Notion API max 100 blocks per request
+            "children": children,
         }
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                "https://api.notion.com/v1/pages",
-                headers=headers,
-                json=payload,
-                timeout=15,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-
-        return f"Page created: '{title}' — {data.get('url', 'no URL')}"
-
+        client = AsyncClient(auth=settings.notion_token)
+        response = await client.pages.create(**payload)
+        return {"status": "created", "page_id": response["id"], "url": response["url"]}
+    except APIResponseError as exc:
+        return {"status": "error", "detail": str(exc)}
     except Exception as exc:
-        return f"TOOL_ERROR: Notion page creation failed — {exc}"
+        return {"status": "error", "detail": str(exc)}
