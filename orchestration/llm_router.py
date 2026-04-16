@@ -1,15 +1,18 @@
 """LLM routing and caching layer.
 
-Routes between Haiku (fast/cheap) and Sonnet (strong) based on prompt
-token count and task type.  Integrates the TTL cache from ``core.cache``
+Routes between Gemini Flash (fast/cheap) and Gemini Pro (strong) based on 
+prompt token count and task type. Integrates the TTL cache from ``core.cache``
 so that identical prompts within the cache window skip the API call entirely.
 """
 
-import anthropic, time
+import time
 from functools import lru_cache
+from google import genai
+from google.genai import types
+
 from core.config import settings
 from core.errors import AgentError, ConfigurationError
-from core.observability import get_logger
+from core.logging import get_logger
 from core import tokenizer
 from core.cache import llm_cache, TTLCache
 from pydantic import BaseModel
@@ -26,8 +29,9 @@ class LLMResponse(BaseModel):
     from_cache: bool = False
 
 
-FAST_MODEL   = "claude-haiku-4-5-20251001"
-STRONG_MODEL = "claude-sonnet-4-6"
+# Gemini 2.0 release family constants
+FAST_MODEL   = "gemini-2.0-flash"
+STRONG_MODEL = "gemini-2.0-pro-exp-02-05"
 
 
 def _is_placeholder_api_key(value: str) -> bool:
@@ -36,28 +40,44 @@ def _is_placeholder_api_key(value: str) -> bool:
 
 
 @lru_cache(maxsize=1)
-def _get_client() -> anthropic.AsyncAnthropic:
-    return anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+def _get_client() -> genai.Client:
+    return genai.Client(api_key=settings.gemini_api_key, http_options={'api_version': 'v1alpha'})
 
 
 def _select_model(prompt_tokens: int, task_type: str) -> str:
-    if prompt_tokens > 2000 or task_type in ("research", "coding", "analysis"):
+    # Gemini Flash is extremely capable for its size; we reserve Pro for 
+    # intensive analysis or very long context.
+    if prompt_tokens > 15000 or task_type in ("research", "coding", "analysis"):
         return STRONG_MODEL
     return FAST_MODEL
+
+
+def _transform_messages(messages: list[dict]) -> list[types.Content]:
+    """Translate OpenAI/Anthropic message format to Google Gemini Content format."""
+    gemini_messages = []
+    for m in messages:
+        role = "model" if m["role"] == "assistant" else "user"
+        content = m.get("content", "")
+        gemini_messages.append(
+            types.Content(
+                role=role,
+                parts=[types.Part(text=content)]
+            )
+        )
+    return gemini_messages
 
 
 async def call(messages: list[dict], system: str,
                task_type: str = "general",
                trace_id: str = "") -> LLMResponse:
-    if _is_placeholder_api_key(settings.anthropic_api_key):
+    if _is_placeholder_api_key(settings.gemini_api_key):
         raise ConfigurationError(
-            "ANTHROPIC_API_KEY is missing or still set to a placeholder value in .env"
+            "GEMINI_API_KEY is missing or still set to a placeholder value in .env"
         )
 
-    # ── Token-accurate counting ──
+    # ── Token-accurate counting (Estimated) ──
     estimated_input = tokenizer.estimate(messages)
-    prompt_tokens = estimated_input
-    model         = _select_model(prompt_tokens, task_type)
+    model = _select_model(estimated_input, task_type)
     
     # ── Cache lookup ──
     cache_key = TTLCache._make_key(model, system, messages)
@@ -68,45 +88,48 @@ async def call(messages: list[dict], system: str,
 
     start = time.monotonic()
     log.info("llm.call_start", model=model, trace_id=trace_id,
-             prompt_tokens=prompt_tokens)
+              prompt_tokens=estimated_input)
 
     try:
-        response = await _get_client().messages.create(
-            model=model, max_tokens=1024,
-            system=system, messages=messages,
+        # Transform messages to Gemini format
+        contents = _transform_messages(messages)
+        
+        # Call Google Gemini API
+        client = _get_client()
+        response = client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system,
+                max_output_tokens=2048,
+                temperature=0.4,
+            )
         )
-    except anthropic.AuthenticationError as exc:
-        log.error("llm.auth_error", error=str(exc), trace_id=trace_id)
-        raise ConfigurationError(
-            "ANTHROPIC_API_KEY was rejected by Anthropic. Check the value in .env"
-        ) from exc
-    except anthropic.BadRequestError as exc:
-        message = str(exc)
-        log.error("llm.bad_request", error=message, trace_id=trace_id)
-        if "credit balance is too low" in message.lower():
-            raise ConfigurationError(
-                "Anthropic account has insufficient credits. Add credits in billing and retry."
-            ) from exc
-        raise AgentError(f"Anthropic request rejected: {message}") from exc
-    except anthropic.APIError as exc:
+    except Exception as exc:
         log.error("llm.api_error", error=str(exc), trace_id=trace_id)
-        raise AgentError(f"Anthropic API error: {exc}") from exc
+        raise AgentError(f"Gemini API error: {exc}") from exc
 
     latency = int((time.monotonic() - start) * 1000)
-    content = "".join(b.text for b in response.content if hasattr(b, "text"))
+    
+    # Extract text content (Gemini returns a GenerateContentResponse)
+    content = ""
+    if response.candidates and response.candidates[0].content.parts:
+        content = response.candidates[0].content.parts[0].text or ""
+
+    usage = response.usage_metadata
+    tokens_in = usage.prompt_token_count or 0
+    tokens_out = usage.candidates_token_count or 0
 
     log.info("llm.call_done", model=model, latency_ms=latency,
-             tokens_in=response.usage.input_tokens,
-             tokens_out=response.usage.output_tokens,
+             tokens_in=tokens_in, tokens_out=tokens_out,
              trace_id=trace_id)
 
     result = LLMResponse(content=content, model_used=model,
-                         tokens_in=response.usage.input_tokens,
-                         tokens_out=response.usage.output_tokens,
+                         tokens_in=tokens_in, tokens_out=tokens_out,
                          latency_ms=latency)
 
     # Online token calibration (actual API usage vs local estimate)
-    await tokenizer.record_actual(estimated_input, response.usage.input_tokens)
+    await tokenizer.record_actual(estimated_input, tokens_in)
 
     # ── Cache store (only cache successful responses) ──
     await llm_cache.set(cache_key, {

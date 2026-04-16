@@ -1,6 +1,6 @@
 import time, uuid
 from fastapi import Request
-from core.observability import get_logger
+from core.logging import get_logger
 
 log = get_logger("api")
 

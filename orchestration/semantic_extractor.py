@@ -1,6 +1,6 @@
 import asyncio
 import json
-from core.observability import get_logger
+from core.logging import get_logger
 from core.config import settings
 from core.schemas import Message
 from models.user_facts import set_fact

@@ -1,60 +1,52 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from tools.registry import list_tools, get_tool
 from tools.sandbox import approve_tool, confirm_destructive
 from core.errors import ToolNotFoundError
+from core.schemas import APIResponse
+from core.exceptions import ResourceNotFound, ValidationException
 from pydantic import BaseModel
 
 router = APIRouter()
 
-@router.get("/tools")
+@router.get("/tools", response_model=APIResponse)
 async def get_tools():
-    return [t.model_dump() for t in list_tools()]
+    return APIResponse(success=True, data=[t.model_dump() for t in list_tools()])
 
 class ApproveRequest(BaseModel):
     user_id: str
 
-def _get_tool_or_404(tool_name: str):
-    """Resolve the tool spec, raising 404 if not found."""
+def _get_tool_spec(tool_name: str):
+    """Resolve the tool spec, raising ResourceNotFound if not found."""
     try:
         spec, _ = get_tool(tool_name)
         return spec
     except ToolNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found.")
+        raise ResourceNotFound(f"Tool '{tool_name}' not found.")
 
-@router.post("/tools/{tool_name}/approve")
+@router.post("/tools/{tool_name}/approve", response_model=APIResponse)
 async def approve(tool_name: str, body: ApproveRequest):
-    spec = _get_tool_or_404(tool_name)
+    spec = _get_tool_spec(tool_name)
     if spec.permission_tier != "write":
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Tool '{tool_name}' has tier '{spec.permission_tier}', not 'write'. "
-                f"Use /confirm for destructive tools."
-            ),
+        raise ValidationException(
+            f"Tool '{tool_name}' has tier '{spec.permission_tier}', expected 'write'."
         )
     approve_tool(body.user_id, tool_name)
-    return {"approved": True, "tool": tool_name, "user_id": body.user_id}
+    return APIResponse(
+        success=True, 
+        data={"approved": True, "tool": tool_name}, 
+        message="Interaction protocol authorized"
+    )
 
-@router.post("/tools/{tool_name}/confirm")
+@router.post("/tools/{tool_name}/confirm", response_model=APIResponse)
 async def confirm_tool(tool_name: str, body: ApproveRequest):
-    """
-    Grant session-scoped confirmation for a destructive tool.
-    This resets when the server restarts — by design.
-    """
-    spec = _get_tool_or_404(tool_name)
+    spec = _get_tool_spec(tool_name)
     if spec.permission_tier != "destructive":
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Tool '{tool_name}' has tier '{spec.permission_tier}', not 'destructive'. "
-                f"Use /approve for write tools."
-            ),
+        raise ValidationException(
+            f"Tool '{tool_name}' has tier '{spec.permission_tier}', expected 'destructive'."
         )
     confirm_destructive(body.user_id, tool_name)
-    return {
-        "confirmed": True,
-        "tool": tool_name,
-        "user_id": body.user_id,
-        "scope": "session",
-        "note": "Confirmation is session-scoped. Re-confirm after server restart.",
-    }
+    return APIResponse(
+        success=True,
+        data={"confirmed": True, "tool": tool_name, "scope": "session"},
+        message="Destructive protocol confirmed"
+    )

@@ -61,10 +61,12 @@ function navigate(page) {
 // ── Diagnostics ──
 async function loadOverview() {
   try {
-    const [stats, sessions] = await Promise.all([
+    const [statsRes, sessionsRes] = await Promise.all([
       fetch(`${API}/api/stats`).then(r => r.json()),
       fetch(`${API}/api/sessions`).then(r => r.json()),
     ]);
+    const stats = statsRes.data;
+    const sessions = sessionsRes.data;
 
     document.getElementById('stat-tools').textContent = stats.tools_loaded.toString().padStart(2, '0');
     document.getElementById('stat-sessions').textContent = sessions.sessions.length.toString().padStart(2, '0');
@@ -96,7 +98,8 @@ async function loadOverview() {
 
 // ── Archives ──
 async function loadSessions() {
-  const { sessions } = await fetch(`${API}/api/sessions`).then(r => r.json());
+  const res = await fetch(`${API}/api/sessions`).then(r => r.json());
+  const { sessions } = res.data;
   const tbody = document.getElementById('all-sessions');
   tbody.innerHTML = sessions.map(s => `
     <tr>
@@ -111,10 +114,12 @@ async function loadSessions() {
 // ── Cognition ──
 async function loadMemory() {
   try {
-    const [episodes, facts] = await Promise.all([
+    const [epRes, factsRes] = await Promise.all([
       fetch(`${API}/api/memory/episodes`).then(r => r.json()),
       fetch(`${API}/api/memory/facts/default_user`).then(r => r.json()),
     ]);
+    const episodes = epRes.data;
+    const facts = factsRes.data;
 
     const epContainer = document.getElementById('episodes-list');
     epContainer.innerHTML = episodes.episodes.length === 0 
@@ -176,9 +181,10 @@ async function sendMessage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: msg, session_id: chatSessionId }),
     });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.detail || 'CONNECTION TERMINATED');
+    const res = await resp.json();
+    if (!res.success) throw new Error(res.message || 'CONNECTION TERMINATED');
     
+    const data = res.data;
     chatSessionId = data.session_id;
     removeChatBubble(loadingId);
     const meta = `STEP:${data.steps_taken} // PROTOCOLS:[${data.tools_used.join(',') || 'NEURAL'}] // STATUS:${data.status}`;
@@ -205,7 +211,8 @@ function removeChatBubble(id) { document.getElementById(id)?.remove(); }
 
 // ── Protocols ──
 async function loadTools() {
-  const tools = await fetch(`${API}/tools`).then(r => r.json());
+  const res = await fetch(`${API}/tools`).then(r => r.json());
+  const tools = res.data;
   const tbody = document.getElementById('tools-list');
   tbody.innerHTML = tools.map(t => `
     <tr>

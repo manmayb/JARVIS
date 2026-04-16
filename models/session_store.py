@@ -3,9 +3,6 @@ from datetime import datetime
 from typing import Any
 from models.database import get_db
 from core.schemas import Message
-from core.observability import get_logger
-
-log = get_logger(__name__)
 
 # Hard cap on messages stored per session.
 # Oldest messages are pruned automatically when exceeded.
@@ -54,7 +51,6 @@ async def get_or_create_session(session_id: str,
         (session_id, user_id),
     )
     await db.commit()
-    log.info("session.created", session_id=session_id, user_id=user_id)
     return {"session_id": session_id, "user_id": user_id, "message_count": 0}
 
 
@@ -219,4 +215,3 @@ async def _prune_if_needed(session_id: str, message_count: int) -> None:
         (session_id, excess),
     )
     await db.commit()
-    log.info("session.pruned", session_id=session_id, removed=excess)

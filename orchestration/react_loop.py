@@ -11,7 +11,7 @@ import asyncio, time, json
 from core.schemas import TaskRequest, Message
 from core.config import settings
 from core.llm_parser import parse_think_output
-from core.observability import (
+from core.logging import (
     get_logger,
     increment_facts_extracted_total,
 )
@@ -24,7 +24,7 @@ from tools.schemas import ToolCallRequest
 from models.session_store import save_session
 from orchestration.semantic_extractor import extract_facts, save_facts
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Callable, Awaitable
 
 log = get_logger(__name__)
 
@@ -36,6 +36,7 @@ class LoopResult(BaseModel):
     exit_reason: str
     steps: int
     tool_calls_log: list[dict] = []
+    agent_plan: list[dict] = []
 
 
 async def _persist_session_snapshot(request: TaskRequest,
@@ -81,7 +82,8 @@ async def _background_extract(session_id: str,
 
 async def run(request: TaskRequest,
               message_history: list[Message],
-              start_time: float) -> LoopResult:
+              start_time: float,
+              pre_execute_hook: Optional[Callable[[str, dict], Awaitable[bool]]] = None) -> LoopResult:
 
     guard      = LoopGuard(max_steps=settings.max_steps)
     step_count = 0
@@ -151,6 +153,20 @@ async def run(request: TaskRequest,
                              else settings.max_retries_per_tool)
 
         # ── Execute tool (with cache) ──
+        # Call pre-execution hook if provided (e.g., for confirmation)
+        if pre_execute_hook:
+            approved = await pre_execute_hook(thought.tool_name, thought.tool_parameters or {})
+            if not approved:
+                observation = "Tool execution cancelled by agent policy or user."
+                message_history.append(Message(role="user", content=f"Observation: {observation}"))
+                request._tool_calls_log.append({
+                    "tool": thought.tool_name,
+                    "params": thought.tool_parameters,
+                    "success": False,
+                    "error": "Cancelled"
+                })
+                continue
+
         call_req = ToolCallRequest(
             tool_name=thought.tool_name,
             parameters=thought.tool_parameters or {},
@@ -158,6 +174,7 @@ async def run(request: TaskRequest,
             user_id=request.user_id,
             step_number=step_count,
             trace_id=trace_id,
+            allowed_tool_names=request.allowed_tools,
         )
 
         log.info("loop.tool_call", tool=thought.tool_name,
@@ -229,3 +246,34 @@ def _partial_answer(history: list[Message]) -> str:
         if msg.role == "assistant" and msg.content:
             return f"Task stopped early. Last reasoning: {msg.content[:300]}"
     return "Task stopped early — no partial result available."
+
+async def run_orchestrated(request: TaskRequest,
+                             message_history: list[Message],
+                             start_time: float) -> LoopResult:
+    """Entry point for the multi-agent orchestrated flow."""
+    from orchestration.agents.definitions.orchestrator import OrchestratorAgent
+    from orchestration.agents.base import AgentContext
+    
+    orchestrator = OrchestratorAgent()
+    
+    # Map TaskRequest to AgentContext
+    context = AgentContext(
+        session_id=request.session_id,
+        user_id=request.user_id,
+        memory_snapshot={"recent_history": [m.content for m in message_history[-5:]]},
+        parent_trace_id=request.trace_id
+    )
+    
+    agent_result = await orchestrator.run(request.user_input, context)
+    
+    # Sync tool calls back to request for observability
+    request._tool_calls_log.clear()
+    request._tool_calls_log.extend(agent_result.tool_calls)
+    
+    return LoopResult(
+        answer=agent_result.output,
+        exit_reason="completed" if agent_result.success else "failed",
+        steps=agent_result.tool_calls_made,
+        tool_calls_log=agent_result.tool_calls,
+        agent_plan=getattr(agent_result, "agent_plan", [])
+    )

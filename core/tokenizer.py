@@ -21,7 +21,7 @@ was removed to avoid misleading truncation decisions.
 
 from __future__ import annotations
 import asyncio
-from core.observability import get_logger
+from core.logging import get_logger
 
 log = get_logger(__name__)
 

@@ -13,7 +13,7 @@ import sys
 from typing import Callable, Optional
 from tools.schemas import ToolSpec
 from core.errors import ToolNotFoundError
-from core.observability import get_logger
+from core.logging import get_logger
 
 log = get_logger("tools.registry")
 

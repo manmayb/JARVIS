@@ -468,6 +468,11 @@
                 <button onclick="send()" style="border-radius: calc(var(--radius) - 6px);" class="absolute right-3 top-3 h-11 px-6 btn-tactile text-[9px] mono font-bold uppercase tracking-wider">
                   Execute
                 </button>
+                <button id="mic-btn" onmousedown="startRecording()" onmouseup="stopRecording()" onmouseleave="stopRecording()" 
+                        style="border-radius: calc(var(--radius) - 6px);" 
+                        class="absolute right-32 top-3 h-11 w-11 flex items-center justify-center btn-tactile text-[var(--text-secondary)] hover:text-[var(--accent)] transition-all">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                </button>
               </div>
             </footer>
           </div>
@@ -633,6 +638,81 @@
         setPulse(false);
         add('JARVIS', "Link anomaly detected. Local core operational.");
         addLog("NETWORK ANOMALY DETECTED");
+      }
+    }
+
+    // ── VOICE MODALITY ──
+    let mediaRecorder;
+    let audioChunks = [];
+    const micBtn = document.getElementById('mic-btn');
+    const neuralDot = document.querySelector('.syscore-dot');
+
+    async function checkVoiceStatus() {
+      try {
+        const r = await fetch('/voice/status');
+        const d = await r.json();
+        if (!d.ready) {
+          micBtn.disabled = true;
+          micBtn.title = "Voice not configured";
+          micBtn.style.opacity = '0.3';
+        }
+      } catch (e) {}
+    }
+    checkVoiceStatus();
+
+    async function startRecording() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+        
+        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+        mediaRecorder.onstop = uploadAudio;
+        
+        mediaRecorder.start();
+        micBtn.style.color = 'var(--accent)';
+        micBtn.style.boxShadow = '0 0 20px var(--accent-glow)';
+        if(neuralDot) neuralDot.style.animationDuration = '0.4s';
+        addLog("VOICE CAPTURE ENGAGED");
+      } catch (err) {
+        addLog("VOICE ACCESS DENIED");
+      }
+    }
+
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+        micBtn.style.color = '';
+        micBtn.style.boxShadow = '';
+        if(neuralDot) neuralDot.style.animationDuration = '1.4s';
+      }
+    }
+
+    async function uploadAudio() {
+      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'capture.webm');
+      
+      setPulse(true);
+      addLog("TRANSCRIBING NEURAL AUDIO...");
+      
+      try {
+        const r = await fetch('/voice/transcribe', { method: 'POST', body: formData });
+        const d = await r.json();
+        
+        setPulse(false);
+        if (d.transcript) {
+          add('USER', d.transcript);
+          add('JARVIS', d.response);
+          if (d.audio) {
+            const audio = new Audio(`data:${d.mime_type};base64,` + d.audio);
+            audio.play();
+          }
+        }
+        addLog("VOICE INSTRUCTION PROCESSED");
+      } catch (e) {
+        setPulse(false);
+        addLog("VOICE LINK ERROR");
       }
     }
 

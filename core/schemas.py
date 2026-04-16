@@ -1,10 +1,23 @@
-"""Core Pydantic schemas shared across the JARVIS V4 system."""
-
 from datetime import datetime
-from typing import Optional
+from typing import Any, Generic, Optional, TypeVar, Union
 import uuid
 
 from pydantic import BaseModel, Field, PrivateAttr
+
+T = TypeVar("T")
+
+class APIResponse(BaseModel, Generic[T]):
+    """Standard success/error wrapper for all JARVIS API responses."""
+    success: bool
+    message: Optional[str] = None
+    data: Optional[T] = None
+    error_code: Optional[int] = None
+
+class PaginatedResponse(APIResponse, Generic[T]):
+    """Common structure for all paginated lists in the system."""
+    total: int
+    page: int
+    limit: int
 
 class Message(BaseModel):
     role: str
@@ -17,6 +30,7 @@ class TaskRequest(BaseModel):
     session_id: str
     user_id: str = "default_user"
     trace_id: str = Field(default_factory=lambda: f"tr_{uuid.uuid4().hex[:12]}")
+    allowed_tools: Optional[list[str]] = None
 
     # Private mutable state — isolated per instance, excluded from serialization
     _steps_completed: int = PrivateAttr(default=0)
@@ -29,6 +43,7 @@ class TaskResult(BaseModel):
     status: str
     steps_taken: Optional[int] = None
     tool_calls_log: list[dict] = []
+    agent_plan: list[dict] = []
     trace_id: str = ""
 
 class ThinkOutput(BaseModel):
@@ -55,12 +70,8 @@ class ChatResponse(BaseModel):
     steps_taken: Optional[int] = None
     tools_used: list[str] = []
     tool_calls_made: int = 0
+    agent_plan: list[dict] = []
     status: str
 
 
-class ErrorResponse(BaseModel):
-    """Standard error envelope returned on all 4xx/5xx chat failures."""
-    error: str
-    error_code: str
-    trace_id: str
-    session_id: Optional[str] = None
+# No separate ErrorResponse needed; we use APIResponse[None] with success=False

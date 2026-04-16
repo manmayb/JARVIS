@@ -1,6 +1,6 @@
 # Jarvis — AI Agent
 
-A production-grade autonomous AI agent built on Claude. Understands natural language, reasons across multiple steps, executes real tools, and returns structured responses — not just chat.
+A production-grade autonomous AI agent built on Google Gemini. Understands natural language, reasons across multiple steps, executes real tools, and returns structured responses — not just chat.
 
 ---
 
@@ -64,7 +64,7 @@ JARVIS/
 │   ├── task_runner.py          # Entry point, global timeout wrapper
 │   ├── react_loop.py           # Think → Act → Observe loop
 │   ├── context_assembler.py    # Builds prompt from history + tools
-│   ├── llm_router.py           # Model selection + Claude API call
+│   ├── llm_router.py           # Model selection + Gemini API call
 │   ├── loop_guard.py           # Stuck loop detection
 │   └── message_window.py      # Message history truncation
 │
@@ -103,7 +103,7 @@ JARVIS/
 
 - macOS or Linux
 - Python 3.11+
-- An Anthropic API key ([get one free at console.anthropic.com](https://console.anthropic.com))
+- A Google Gemini API key ([get one at aistudio.google.com](https://aistudio.google.com))
 
 ### Setup
 
@@ -115,11 +115,11 @@ cd JARVIS
 source .venv/bin/activate
 
 # Install dependencies (if not already done)
-pip install fastapi uvicorn anthropic httpx pydantic-settings \
+pip install fastapi uvicorn google-genai httpx pydantic-settings \
             sympy aiofiles pytest pytest-asyncio
 
 # Add your API key to .env
-echo 'ANTHROPIC_API_KEY=sk-ant-your-key-here' > .env
+echo 'GEMINI_API_KEY=AIzaSy...' > .env
 echo 'APP_ENV=development' >> .env
 echo 'LOG_LEVEL=INFO' >> .env
 
@@ -248,7 +248,7 @@ All values are set in `.env` and read by `core/config.py`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | required | Your Anthropic API key |
+| `GEMINI_API_KEY` | required | Your Google Gemini API key |
 | `APP_ENV` | `development` | Environment name |
 | `LOG_LEVEL` | `INFO` | Log verbosity |
 | `TOOL_TIMEOUT_SECONDS` | `10` | Per-tool execution timeout |
@@ -272,14 +272,14 @@ Worst case with retries: `10s × 3 × 12 + 72s backoff = 432s` — but the 80% b
 
 ## Model routing
 
-Jarvis routes between two Claude models based on task complexity:
+Jarvis routes between two Gemini models based on task complexity:
 
 | Model | Used when |
 |-------|-----------|
-| `claude-haiku-4-5` | Prompt < 2000 tokens AND task type is general/math/simple |
-| `claude-sonnet-4-6` | Prompt ≥ 2000 tokens OR task type is research/coding/analysis |
+| `gemini-2.0-flash` | Prompt < 15,000 tokens AND task type is general/math/simple |
+| `gemini-2.0-pro-exp` | Prompt ≥ 15,000 tokens OR task type is research/coding/analysis |
 
-This cuts API costs by ~70% on simple tasks without sacrificing quality on hard ones.
+This cuts API costs by ~90% on simple tasks without sacrificing quality on hard ones.
 
 ---
 
@@ -291,7 +291,7 @@ Every event is logged as structured JSON to stdout. Each task gets a `trace_id` 
 
 ```json
 {"ts":"2026-04-14T10:32:01Z","level":"INFO","event":"api.request","method":"POST","path":"/chat","trace_id":"tr_abc123"}
-{"ts":"2026-04-14T10:32:01Z","level":"INFO","event":"llm.call_start","model":"claude-haiku-4-5","trace_id":"tr_abc123"}
+{"ts":"2026-04-14T10:32:01Z","level":"INFO","event":"llm.call_start","model":"gemini-2.0-flash","trace_id":"tr_abc123"}
 {"ts":"2026-04-14T10:32:02Z","level":"INFO","event":"llm.call_done","latency_ms":820,"tokens_in":312,"tokens_out":64}
 {"ts":"2026-04-14T10:32:02Z","level":"INFO","event":"loop.tool_call","tool":"calculator","step":1}
 {"ts":"2026-04-14T10:32:02Z","level":"INFO","event":"tool.success","tool":"calculator","latency_ms":3}
@@ -401,7 +401,7 @@ cat /tmp/jarvis_files/test.txt
 |-------|-----------|
 | Web framework | FastAPI |
 | ASGI server | Uvicorn |
-| LLM | Anthropic Claude (Haiku + Sonnet) |
+| LLM | Google Gemini (2.0 Flash + 2.0 Pro) |
 | Math | SymPy |
 | HTTP client | HTTPX |
 | Config | Pydantic Settings |

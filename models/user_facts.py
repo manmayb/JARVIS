@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from models.database import get_db
-from core.observability import get_logger
+from core.logging import get_logger
 
 log = get_logger(__name__)
 

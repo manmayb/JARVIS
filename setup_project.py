@@ -82,8 +82,8 @@ class ChatResponse(BaseModel):
     status: str
 '''
 
-# ── core/observability.py ─────────────────────────────────────────────────────
-files["core/observability.py"] = '''\
+# ── core.logging.py ─────────────────────────────────────────────────────
+files["core.logging.py"] = '''\
 import json, sys
 from datetime import datetime, timezone
 
@@ -123,7 +123,7 @@ class ContextWindowError(AgentError): pass
 files["core/llm_parser.py"] = '''\
 import re, json
 from core.schemas import ThinkOutput
-from core.observability import get_logger
+from core.logging import get_logger
 
 log = get_logger(__name__)
 
@@ -295,7 +295,7 @@ from tools.sandbox import check_permission
 from tools.schemas import ToolCallRequest, ToolCallResult, ToolError
 from core.config import settings
 from core.errors import ToolNotFoundError
-from core.observability import get_logger
+from core.logging import get_logger
 
 log = get_logger(__name__)
 RETRY_DELAYS = [1, 5]
@@ -502,7 +502,7 @@ files["tools/definitions/python_exec.py"] = '''\
 import asyncio, tempfile, os, textwrap
 from tools.registry import register_tool
 from core.config import settings
-from core.observability import get_logger
+from core.logging import get_logger
 
 log = get_logger(__name__)
 
@@ -706,7 +706,7 @@ def hash_params(params: dict) -> str:
 files["orchestration/llm_router.py"] = '''\
 import anthropic, time
 from core.config import settings
-from core.observability import get_logger
+from core.logging import get_logger
 from pydantic import BaseModel
 
 log = get_logger(__name__)
@@ -760,7 +760,7 @@ import json
 from core.schemas import Message, TaskRequest
 from tools.registry import list_tools
 from orchestration.message_window import truncate_history, truncation_notice
-from core.observability import get_logger
+from core.logging import get_logger
 
 log = get_logger(__name__)
 
@@ -814,7 +814,7 @@ import asyncio, time, json
 from core.schemas import TaskRequest, Message
 from core.config import settings
 from core.llm_parser import parse_think_output
-from core.observability import get_logger
+from core.logging import get_logger
 from orchestration.llm_router import call as llm_call
 from orchestration.context_assembler import build as assemble_context
 from orchestration.loop_guard import LoopGuard, Step, hash_params
@@ -927,7 +927,7 @@ def _partial_answer(history: list[Message]) -> str:
 files["orchestration/task_runner.py"] = '''\
 import asyncio, time
 from core.schemas import TaskRequest, TaskResult, Message
-from core.observability import get_logger
+from core.logging import get_logger
 from core.config import settings
 from orchestration.react_loop import run as run_loop
 
@@ -992,7 +992,7 @@ files["api/routes/__init__.py"] = ""
 files["api/middleware/logger.py"] = '''\
 import time, uuid
 from fastapi import Request
-from core.observability import get_logger
+from core.logging import get_logger
 
 log = get_logger("api")
 

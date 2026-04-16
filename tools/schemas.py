@@ -20,6 +20,7 @@ class ToolCallRequest(BaseModel):
     step_number: int
     trace_id: str
     dry_run: bool = False
+    allowed_tool_names: Optional[list[str]] = None
 
 class ToolError(BaseModel):
     code: str

@@ -1,7 +1,7 @@
 import asyncio, tempfile, os, textwrap, ast
 from tools.registry import register_tool
 from core.config import settings
-from core.observability import get_logger
+from core.logging import get_logger
 
 log = get_logger(__name__)
 

@@ -12,7 +12,7 @@ import json, uuid
 from typing import Optional
 from pydantic import BaseModel, Field
 from core.schemas import TaskRequest, TaskResult, Message
-from core.observability import get_logger
+from core.logging import get_logger
 from core.config import settings
 
 log = get_logger(__name__)

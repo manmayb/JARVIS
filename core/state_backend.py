@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import Optional
 from core.config import settings
-from core.observability import get_logger
+from core.logging import get_logger
 
 log = get_logger(__name__)
 
@@ -34,6 +34,12 @@ class StateBackend(ABC):
     async def has_approval(self, user_id: str, tool_name: str,
                            tier: str) -> bool: ...
 
+    @abstractmethod
+    async def append_to_list(self, key: str, value: str) -> None: ...
+
+    @abstractmethod
+    async def get_list(self, key: str) -> list[str]: ...
+
 
 # ── In-memory implementation ────────────────────────────────────────
 
@@ -42,6 +48,7 @@ class MemoryBackend(StateBackend):
         self._rate: dict[str, list[float]] = defaultdict(list)
         self._lock = asyncio.Lock()
         self._approvals: dict[str, set[str]] = {}   # "user:tier" → {tool}
+        self._lists: dict[str, list[str]] = defaultdict(list)
 
     async def rate_limit_allowed(self, key: str,
                                  limit: int, window: int = 60) -> bool:
@@ -62,6 +69,14 @@ class MemoryBackend(StateBackend):
     async def has_approval(self, user_id: str, tool_name: str,
                            tier: str) -> bool:
         return tool_name in self._approvals.get(f"{user_id}:{tier}", set())
+
+    async def append_to_list(self, key: str, value: str) -> None:
+        async with self._lock:
+            self._lists[key].append(value)
+
+    async def get_list(self, key: str) -> list[str]:
+        async with self._lock:
+            return list(self._lists.get(key, []))
 
 
 # ── Redis implementation ────────────────────────────────────────────
@@ -91,6 +106,14 @@ class RedisBackend(StateBackend):
         return await self._r.sismember(
             f"approval:{user_id}:{tier}", tool_name
         )
+
+    async def append_to_list(self, key: str, value: str) -> None:
+        rk = f"list:{key}"
+        await self._r.rpush(rk, value)
+        await self._r.expire(rk, 3600)  # 1 hour TTL for transient logs
+
+    async def get_list(self, key: str) -> list[str]:
+        return await self._r.lrange(f"list:{key}", 0, -1)
 
 
 # ── Factory ─────────────────────────────────────────────────────────

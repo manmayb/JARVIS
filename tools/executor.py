@@ -5,7 +5,7 @@ from tools.sandbox import check_permission
 from tools.schemas import ToolCallRequest, ToolCallResult, ToolError
 from core.config import settings
 from core.errors import ToolNotFoundError
-from core.observability import get_logger
+from core.logging import get_logger
 from core.cache import tool_cache, TTLCache
 
 log = get_logger(__name__)
@@ -62,6 +62,14 @@ async def execute(req: ToolCallRequest,
             success=False,
             error=ToolError(code="VALIDATION_ERROR",
                             message=f"Unknown tool: {req.tool_name}",
+                            retryable=False),
+            tool_name=req.tool_name, step_number=req.step_number)
+
+    if req.allowed_tool_names is not None and req.tool_name not in req.allowed_tool_names:
+        return ToolCallResult(
+            success=False,
+            error=ToolError(code="forbidden",
+                            message=f"Agent restricted access: '{req.tool_name}' not in allowed tools list.",
                             retryable=False),
             tool_name=req.tool_name, step_number=req.step_number)
 

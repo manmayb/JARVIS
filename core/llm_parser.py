@@ -1,6 +1,6 @@
 import re, json
 from core.schemas import ThinkOutput
-from core.observability import get_logger
+from core.logging import get_logger
 
 log = get_logger(__name__)
 

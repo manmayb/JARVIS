@@ -7,7 +7,7 @@ from core.schemas import Message, TaskRequest
 from core.config import settings
 from tools.registry import list_tools
 from orchestration.message_window import truncate_history, truncation_notice
-from core.observability import get_logger
+from core.logging import get_logger
 
 log = get_logger(__name__)
 
@@ -34,7 +34,10 @@ Rules:
 
 def build(request: TaskRequest,
           message_history: list[Message]) -> tuple[str, list[dict]]:
-    tools     = list_tools()
+    tools = list_tools()
+    if request.allowed_tools is not None:
+        tools = [t for t in tools if t.name in request.allowed_tools]
+    
     tool_desc = _format_tools(tools)
     system    = SYSTEM_PROMPT + f"\n## Available tools\n{tool_desc}"
 

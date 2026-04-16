@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
 class Settings(BaseSettings):
-    anthropic_api_key: str
+    gemini_api_key: str
     app_env: str = "development"
     log_level: str = "INFO"
 
@@ -52,6 +52,15 @@ class Settings(BaseSettings):
     # Notion
     notion_token: Optional[str] = None
 
+    # Voice Modalities
+    elevenlabs_api_key: Optional[str] = None
+    elevenlabs_voice_id: str = "pNInz6obpgnuMvY4ASal" # Default voice
+    whisper_model_size: str = "base"
+    
+    # Autonomy
+    file_watch_path: Optional[str] = None
+    gmail_watch_interval_sec: int = 120
+    
     model_config = SettingsConfigDict(env_file=".env")
 
 settings = Settings()
